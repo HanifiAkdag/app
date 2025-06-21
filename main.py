@@ -520,7 +520,7 @@ def display_pipeline_results():
     for i, (step, result) in enumerate(zip(st.session_state.pipeline_steps, st.session_state.pipeline_results)):
         operation = step['operation']
         
-        with st.expander(f"Step {i+1}: {operation.replace('_', ' ').title()}", expanded=False):
+        with st.expander(f"Step {i+1}: {operation.replace('_', ' ').title()}", expanded=True):
             if operation in ['preprocessing', 'artifact_removal']:
                 # Show before/after for processing steps
                 col1, col2 = st.columns(2)
