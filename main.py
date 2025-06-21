@@ -154,45 +154,72 @@ def create_preprocessing_params_ui(step_id: str) -> Dict[str, Any]:
 def create_artifact_removal_params_ui(step_id: str) -> Dict[str, Any]:
     """Create UI for artifact removal parameters."""
     with st.expander(f"🎯 Artifact Removal Parameters (Step {step_id})", expanded=True):
+        st.info("💡 This step processes both bright and dark artifacts")
+        
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("Detection")
-            spot_type = st.selectbox("Spot Type", ["bright", "dark"], key=f"spot_type_{step_id}")
-            detection_method = st.selectbox("Detection Method", ["percentile", "otsu", "absolute"],
-                                          key=f"detect_method_{step_id}")
+            st.subheader("Bright Spot Detection")
+            apply_bright = st.checkbox("Remove Bright Spots", value=True, key=f"apply_bright_{step_id}")
+            bright_detection_method = st.selectbox("Detection Method", ["percentile", "otsu", "absolute"],
+                                                  key=f"bright_detect_method_{step_id}", disabled=not apply_bright)
             
-            if detection_method == "percentile":
-                threshold_percentile = st.slider("Threshold Percentile", 0.0, 100.0, 
-                                                95.0 if spot_type == "bright" else 5.0,
-                                                key=f"thresh_perc_{step_id}")
-            elif detection_method == "absolute":
-                absolute_threshold = st.slider("Absolute Threshold", 0, 255, 
-                                              200 if spot_type == "bright" else 50,
-                                              key=f"abs_thresh_{step_id}")
+            if bright_detection_method == "percentile":
+                bright_threshold_percentile = st.slider("Threshold Percentile", 0.0, 100.0, 95.0,
+                                                       key=f"bright_thresh_perc_{step_id}", disabled=not apply_bright)
+            elif bright_detection_method == "absolute":
+                bright_absolute_threshold = st.slider("Absolute Threshold", 0, 255, 200,
+                                                     key=f"bright_abs_thresh_{step_id}", disabled=not apply_bright)
+            
+            st.subheader("Dark Spot Detection")
+            apply_dark = st.checkbox("Remove Dark Spots", value=True, key=f"apply_dark_{step_id}")
+            dark_detection_method = st.selectbox("Detection Method", ["percentile", "otsu", "absolute"],
+                                                key=f"dark_detect_method_{step_id}", disabled=not apply_dark)
+            
+            if dark_detection_method == "percentile":
+                dark_threshold_percentile = st.slider("Threshold Percentile", 0.0, 100.0, 5.0,
+                                                     key=f"dark_thresh_perc_{step_id}", disabled=not apply_dark)
+            elif dark_detection_method == "absolute":
+                dark_absolute_threshold = st.slider("Absolute Threshold", 0, 255, 50,
+                                                   key=f"dark_abs_thresh_{step_id}", disabled=not apply_dark)
         
         with col2:
-            st.subheader("Processing")
+            st.subheader("Processing Parameters")
             apply_opening = st.checkbox("Apply Opening", value=True, key=f"opening_{step_id}")
             opening_size = st.slider("Opening Size", 1, 15, 3, key=f"open_size_{step_id}", 
                                    disabled=not apply_opening)
             min_area = st.slider("Min Area", 1, 1000, 10, key=f"min_area_{step_id}")
             max_area = st.slider("Max Area", 100, 10000, 5000, key=f"max_area_{step_id}")
             
+            st.subheader("Inpainting")
             inpaint_method = st.selectbox("Inpainting Method", ["telea", "ns"], key=f"inpaint_{step_id}")
             inpaint_radius = st.slider("Inpainting Radius", 1, 10, 3, key=f"inpaint_r_{step_id}")
+            
+            # Dilation parameters
+            dilation_size = st.slider("Mask Dilation Size", 0, 10, 2, key=f"dilation_{step_id}")
     
-    # Compile parameters
+    # Compile parameters for both bright and dark spots
     params = {
-        'spot_type': spot_type,
-        'detection_params': {
-            'method': detection_method,
+        'process_both_types': True,
+        'bright_spots': {
+            'enabled': apply_bright,
+            'detection_params': {
+                'method': bright_detection_method,
+            },
+        },
+        'dark_spots': {
+            'enabled': apply_dark,
+            'detection_params': {
+                'method': dark_detection_method,
+            },
         },
         'filtering_params': {
             'apply_opening': apply_opening,
             'opening_size': opening_size,
             'min_area': min_area,
-            'max_area': max_area
+            'max_area': max_area,
+            'dilation_size': dilation_size,
+            'dilation_shape': 'ellipse'
         },
         'inpainting_params': {
             'method': inpaint_method,
@@ -200,10 +227,18 @@ def create_artifact_removal_params_ui(step_id: str) -> Dict[str, Any]:
         }
     }
     
-    if detection_method == "percentile":
-        params['detection_params']['threshold_percentile'] = threshold_percentile
-    elif detection_method == "absolute":
-        params['detection_params']['absolute_threshold'] = absolute_threshold
+    # Add threshold parameters based on detection method
+    if apply_bright:
+        if bright_detection_method == "percentile":
+            params['bright_spots']['detection_params']['threshold_percentile'] = bright_threshold_percentile
+        elif bright_detection_method == "absolute":
+            params['bright_spots']['detection_params']['absolute_threshold'] = bright_absolute_threshold
+    
+    if apply_dark:
+        if dark_detection_method == "percentile":
+            params['dark_spots']['detection_params']['threshold_percentile'] = dark_threshold_percentile
+        elif dark_detection_method == "absolute":
+            params['dark_spots']['detection_params']['absolute_threshold'] = dark_absolute_threshold
     
     return params
 
@@ -337,16 +372,106 @@ def execute_preprocessing(image: np.ndarray, params: Dict[str, Any]) -> np.ndarr
     return processed_image.astype(np.float32) / 255.0
 
 def execute_artifact_removal(image: np.ndarray, params: Dict[str, Any]) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """Execute artifact removal operation."""
-    analyzer = ArtifactRemover()
-    results = analyzer.run_full_analysis(image, **params)
+    """Execute artifact removal operation for both bright and dark spots."""
     
-    if results['success'] and results.get('artifacts_processed', False):
-        # Convert processed image back to [0,1]
-        processed_image = results['processed_image'].astype(np.float32) / 255.0
-        return processed_image, results
+    # Check if we're using the new combined format
+    if params.get('process_both_types', False):
+        return execute_combined_artifact_removal(image, params)
     else:
-        return image.copy(), results
+        # Legacy single spot type format
+        analyzer = ArtifactRemover()
+        results = analyzer.run_full_analysis(image, **params)
+        
+        if results['success'] and results.get('artifacts_processed', False):
+            processed_image = results['processed_image'].astype(np.float32) / 255.0
+            return processed_image, results
+        else:
+            return image.copy(), results
+
+def execute_combined_artifact_removal(image: np.ndarray, params: Dict[str, Any]) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Execute artifact removal for both bright and dark spots."""
+    
+    # Initialize results
+    combined_results = {
+        'success': True,
+        'artifacts_processed': False,
+        'bright_spots_processed': False,
+        'dark_spots_processed': False,
+        'error_message': None,
+        'artifact_statistics': {},
+        'analysis_results': {}
+    }
+    
+    current_image = image.copy()
+    total_artifacts_processed = False
+    
+    try:
+        # Process bright spots if enabled
+        if params['bright_spots']['enabled']:
+            bright_params = {
+                'spot_type': 'bright',
+                'detection_params': params['bright_spots']['detection_params'],
+                'filtering_params': params['filtering_params'],
+                'inpainting_params': params['inpainting_params']
+            }
+            
+            analyzer_bright = ArtifactRemover()
+            bright_results = analyzer_bright.run_full_analysis(current_image, **bright_params)
+            
+            if bright_results['success'] and bright_results.get('artifacts_processed', False):
+                current_image = bright_results['processed_image'].astype(np.float32) / 255.0
+                combined_results['bright_spots_processed'] = True
+                total_artifacts_processed = True
+                
+                # Store bright spot statistics
+                combined_results['artifact_statistics']['bright_spots'] = bright_results.get('artifact_statistics', {})
+        
+        # Process dark spots if enabled
+        if params['dark_spots']['enabled']:
+            # Convert current image back to uint8 for processing
+            if current_image.dtype != np.uint8:
+                current_image_uint8 = (current_image * 255).astype(np.uint8)
+            else:
+                current_image_uint8 = current_image
+            
+            dark_params = {
+                'spot_type': 'dark',
+                'detection_params': params['dark_spots']['detection_params'],
+                'filtering_params': params['filtering_params'],
+                'inpainting_params': params['inpainting_params']
+            }
+            
+            analyzer_dark = ArtifactRemover()
+            dark_results = analyzer_dark.run_full_analysis(current_image_uint8, **dark_params)
+            
+            if dark_results['success'] and dark_results.get('artifacts_processed', False):
+                current_image = dark_results['processed_image'].astype(np.float32) / 255.0
+                combined_results['dark_spots_processed'] = True
+                total_artifacts_processed = True
+                
+                # Store dark spot statistics
+                combined_results['artifact_statistics']['dark_spots'] = dark_results.get('artifact_statistics', {})
+        
+        # Update combined results
+        combined_results['artifacts_processed'] = total_artifacts_processed
+        combined_results['processed_image'] = current_image
+        
+        # Combine analysis results
+        combined_results['analysis_results'] = {
+            'bright_spots_enabled': params['bright_spots']['enabled'],
+            'dark_spots_enabled': params['dark_spots']['enabled'],
+            'bright_spots_processed': combined_results['bright_spots_processed'],
+            'dark_spots_processed': combined_results['dark_spots_processed'],
+            'total_artifacts_processed': total_artifacts_processed,
+            'inpainting_method': params['inpainting_params']['method']
+        }
+        
+    except Exception as e:
+        combined_results['success'] = False
+        combined_results['error_message'] = str(e)
+        current_image = image.copy()
+    
+    return current_image, combined_results
 
 def execute_phase_analysis(image: np.ndarray, params: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     """Execute phase analysis operation."""
@@ -426,7 +551,35 @@ def display_pipeline_results():
                 # Show additional info for artifact removal
                 if operation == 'artifact_removal' and isinstance(result, tuple):
                     artifact_results = result[1]
-                    if artifact_results.get('artifacts_processed', False):
+                    
+                    # Handle combined artifact removal results
+                    if artifact_results.get('bright_spots_processed', False) or artifact_results.get('dark_spots_processed', False):
+                        st.success("✅ Artifacts were detected and processed")
+                        
+                        # Show processing status for each type
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if artifact_results.get('bright_spots_processed', False):
+                                st.success("🔆 Bright spots processed")
+                                bright_stats = artifact_results.get('artifact_statistics', {}).get('bright_spots', {})
+                                if bright_stats:
+                                    st.metric("Bright Components", 
+                                            bright_stats.get('initial_artifacts', {}).get('num_components', 0))
+                            else:
+                                st.info("🔆 Bright spots: not processed")
+                        
+                        with col2:
+                            if artifact_results.get('dark_spots_processed', False):
+                                st.success("🔻 Dark spots processed")
+                                dark_stats = artifact_results.get('artifact_statistics', {}).get('dark_spots', {})
+                                if dark_stats:
+                                    st.metric("Dark Components", 
+                                            dark_stats.get('initial_artifacts', {}).get('num_components', 0))
+                            else:
+                                st.info("🔻 Dark spots: not processed")
+                    
+                    # Handle legacy single-type artifact removal
+                    elif artifact_results.get('artifacts_processed', False):
                         st.success("✅ Artifacts were detected and processed")
                         stats = artifact_results.get('artifact_statistics', {})
                         if stats:
