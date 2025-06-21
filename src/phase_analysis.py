@@ -16,32 +16,11 @@ from .preprocessing import correct_illumination, denoise_image
 class PhaseAnalyzer:
     """
     A utility class for performing phase analysis on microscopy images.
-    Pure Python implementation without any GUI dependencies.
     """
     
     def __init__(self):
         self.results = {}
         self.intermediate_images = {}
-    
-    def apply_initial_median(self, 
-                           image: np.ndarray, 
-                           size: int = 1) -> np.ndarray:
-        """
-        Applies an initial median filter for basic noise reduction.
-        
-        Args:
-            image: Input float image [0,1]
-            size: Disk size for median filter
-            
-        Returns:
-            Median filtered image
-        """
-        if size > 0:
-            filtered_image = filters.median(image, footprint=disk(size))
-            self.intermediate_images['median_filtered'] = filtered_image
-            return filtered_image
-        else:
-            return image
     
     def _get_threshold_value(self, 
                            image: np.ndarray, 
@@ -650,13 +629,9 @@ class PhaseAnalyzer:
                     **preprocessing_params.get('denoise_params', {})
                 )
             
-            # 2. Initial median filter
-            median_size = preprocessing_params.get('initial_median_size', 1)
-            median_image = self.apply_initial_median(processed_image, median_size)
-            
-            # 3. Create material mask
+            # 2. Create material mask
             material_mask, background_mask = self.create_material_mask(
-                median_image,
+                processed_image,
                 masking_params.get('strategy', 'fill_holes'),
                 masking_params.get('background_threshold', 0.08),
                 masking_params.get('cleanup_area', 500)
@@ -664,7 +639,7 @@ class PhaseAnalyzer:
             
             # 4. Remove artifacts
             cleaned_image = self.remove_artifacts(
-                median_image, material_mask, background_mask,
+                processed_image, material_mask, background_mask,
                 **artifact_removal_params
             )
             
@@ -707,7 +682,7 @@ class PhaseAnalyzer:
                 'material_mask': material_mask,
                 'background_mask': background_mask,
                 'cleaned_image': cleaned_image,
-                'median_image': median_image,
+                'processed_image': processed_image,
                 'original_image': image
             })
             
