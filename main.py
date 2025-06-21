@@ -29,7 +29,7 @@ st.set_page_config(
     page_title="Custom Pipeline Builder",
     page_icon="🔬",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Initialize session state
@@ -495,139 +495,149 @@ def main():
     st.title("🔬 Custom Pipeline Builder")
     st.markdown("*Build custom analysis workflows by chaining operations*")
     
-    # Sidebar for pipeline configuration
-    st.sidebar.header("🛠️ Pipeline Configuration")
+    # Image upload section
+    st.header("📤 Image Upload")
+    col1, col2 = st.columns([2, 1])
     
-    # Image upload
-    st.sidebar.subheader("📤 Image Upload")
-    uploaded_file = st.sidebar.file_uploader(
-        "Choose an image file",
-        type=['png', 'jpg', 'jpeg', 'tiff', 'tif']
-    )
-    
-    if uploaded_file is not None:
-        image = load_and_normalize_image(uploaded_file)
-        if image is not None:
-            st.session_state.original_image = image
-            st.session_state.current_image = image
-            st.session_state.output_dir = create_output_directory(uploaded_file.name)
-            st.sidebar.success("✅ Image loaded successfully")
-            
-            # Show image info
-            st.sidebar.write(f"**Size:** {image.shape[1]}×{image.shape[0]}")
-            st.sidebar.write(f"**Range:** [{image.min():.3f}, {image.max():.3f}]")
+    with col1:
+        uploaded_file = st.file_uploader(
+            "Choose an image file",
+            type=['png', 'jpg', 'jpeg', 'tiff', 'tif']
+        )
+        
+        if uploaded_file is not None:
+            image = load_and_normalize_image(uploaded_file)
+            if image is not None:
+                st.session_state.original_image = image
+                st.session_state.current_image = image
+                st.session_state.output_dir = create_output_directory(uploaded_file.name)
+                st.success("✅ Image loaded successfully")
+                
+                # Display the uploaded image
+                st.image(st.session_state.original_image, caption="Uploaded Image", use_container_width=True)
+            else:
+                st.error("❌ Failed to load image")
+                return
         else:
-            st.sidebar.error("❌ Failed to load image")
+            st.warning("⚠️ Please upload an image to begin")
             return
-    else:
-        st.sidebar.warning("⚠️ Please upload an image to begin")
-        return
     
-    # Pipeline Steps
-    st.sidebar.subheader("🔧 Pipeline Steps")
+    with col2:
+        if st.session_state.original_image is not None:
+            st.write("**Image Statistics:**")
+            st.metric("Width", st.session_state.original_image.shape[1])
+            st.metric("Height", st.session_state.original_image.shape[0])
+            st.metric("Min Value", f"{st.session_state.original_image.min():.3f}")
+            st.metric("Max Value", f"{st.session_state.original_image.max():.3f}")
+            st.metric("Mean", f"{st.session_state.original_image.mean():.3f}")
     
-    # Add step button
-    operation_options = {
-        "preprocessing": "🔧 Preprocessing",
-        "artifact_removal": "🎯 Artifact Removal",
-        "phase_analysis": "🧪 Phase Analysis",
-        "line_analysis": "📏 Line Analysis"
-    }
+    # Pipeline Steps Management
+    st.header("🔧 Pipeline Steps")
     
-    new_operation = st.sidebar.selectbox(
-        "Add Step",
-        options=list(operation_options.keys()),
-        format_func=lambda x: operation_options[x]
-    )
-    
-    if st.sidebar.button("➕ Add Step"):
-        step_id = len(st.session_state.pipeline_steps) + 1
-        st.session_state.pipeline_steps.append({
-            'id': step_id,
-            'operation': new_operation,
-            'params': {}
-        })
-        st.rerun()
-    
-    # Show current pipeline
+    # Show current pipeline steps first
     if st.session_state.pipeline_steps:
-        st.sidebar.write("**Current Pipeline:**")
+        st.subheader("Current Pipeline")
+        
+        # Display pipeline steps in a visual way
+        operation_options = {
+            "preprocessing": "🔧 Preprocessing",
+            "artifact_removal": "🎯 Artifact Removal",
+            "phase_analysis": "🧪 Phase Analysis",
+            "line_analysis": "📏 Line Analysis"
+        }
+        
+        pipeline_display = []
         for i, step in enumerate(st.session_state.pipeline_steps):
-            col1, col2 = st.sidebar.columns([3, 1])
-            with col1:
-                st.write(f"{i+1}. {operation_options[step['operation']]}")
-            with col2:
-                if st.button("❌", key=f"remove_{i}", help="Remove step"):
+            pipeline_display.append(f"{i+1}. {operation_options[step['operation']]}")
+        
+        # Show pipeline flow
+        st.write(" → ".join(pipeline_display))
+        
+        # Individual step removal
+        st.write("**Remove Individual Steps:**")
+        cols = st.columns(len(st.session_state.pipeline_steps))
+        for i, (col, step) in enumerate(zip(cols, st.session_state.pipeline_steps)):
+            with col:
+                if st.button(f"❌ Step {i+1}", key=f"remove_{i}", help=f"Remove {operation_options[step['operation']]}"):
                     st.session_state.pipeline_steps.pop(i)
                     st.rerun()
+    else:
+        st.info("No pipeline steps added yet. Use the controls below to add steps.")
+    
+    # Add step section - moved after current pipeline display
+    st.subheader("Add New Step")
+    col1, col2, col3 = st.columns([2, 1, 1])
+    
+    with col1:
+        operation_options = {
+            "preprocessing": "🔧 Preprocessing",
+            "artifact_removal": "🎯 Artifact Removal",
+            "phase_analysis": "🧪 Phase Analysis",
+            "line_analysis": "📏 Line Analysis"
+        }
         
-        # Clear pipeline button
-        if st.sidebar.button("🗑️ Clear Pipeline"):
+        new_operation = st.selectbox(
+            "Select operation to add",
+            options=list(operation_options.keys()),
+            format_func=lambda x: operation_options[x]
+        )
+    
+    with col2:
+        if st.button("➕ Add Step", use_container_width=True):
+            step_id = len(st.session_state.pipeline_steps) + 1
+            st.session_state.pipeline_steps.append({
+                'id': step_id,
+                'operation': new_operation,
+                'params': {}
+            })
+            st.rerun()
+    
+    with col3:
+        if st.button("🗑️ Clear All", use_container_width=True):
             st.session_state.pipeline_steps = []
             st.session_state.pipeline_results = []
             st.rerun()
     
-    # Main content area
-    if not st.session_state.pipeline_steps:
-        st.info("👈 Add steps to your pipeline using the sidebar")
+    # Configure pipeline steps (only if there are steps)
+    if st.session_state.pipeline_steps:
+        st.header("⚙️ Configure Pipeline Steps")
         
-        # Display the uploaded image
-        if st.session_state.original_image is not None:
-            st.subheader("📸 Uploaded Image")
-            col1, col2 = st.columns([2, 1])
+        # Update parameters for each step
+        for i, step in enumerate(st.session_state.pipeline_steps):
+            operation = step['operation']
+            step_id = f"{i+1}"
             
-            with col1:
-                st.image(st.session_state.original_image, use_container_width=True)
+            if operation == 'preprocessing':
+                params = create_preprocessing_params_ui(step_id)
+            elif operation == 'artifact_removal':
+                params = create_artifact_removal_params_ui(step_id)
+            elif operation == 'phase_analysis':
+                params = create_phase_analysis_params_ui(step_id)
+            elif operation == 'line_analysis':
+                params = create_line_analysis_params_ui(step_id)
             
-            with col2:
-                st.write("**Image Statistics:**")
-                st.metric("Width", st.session_state.original_image.shape[1])
-                st.metric("Height", st.session_state.original_image.shape[0])
-                st.metric("Min Value", f"{st.session_state.original_image.min():.3f}")
-                st.metric("Max Value", f"{st.session_state.original_image.max():.3f}")
-                st.metric("Mean", f"{st.session_state.original_image.mean():.3f}")
+            st.session_state.pipeline_steps[i]['params'] = params
         
-        return
-    
-    # Configure pipeline steps
-    st.header("⚙️ Configure Pipeline Steps")
-    
-    # Update parameters for each step
-    for i, step in enumerate(st.session_state.pipeline_steps):
-        operation = step['operation']
-        step_id = f"{i+1}"
+        # Execute pipeline section
+        st.header("🚀 Execute Pipeline")
         
-        if operation == 'preprocessing':
-            params = create_preprocessing_params_ui(step_id)
-        elif operation == 'artifact_removal':
-            params = create_artifact_removal_params_ui(step_id)
-        elif operation == 'phase_analysis':
-            params = create_phase_analysis_params_ui(step_id)
-        elif operation == 'line_analysis':
-            params = create_line_analysis_params_ui(step_id)
+        col1, col2, col3 = st.columns([1, 1, 2])
         
-        st.session_state.pipeline_steps[i]['params'] = params
-    
-    # Execute pipeline button
-    st.header("🚀 Execute Pipeline")
-    
-    col1, col2, col3 = st.columns([1, 1, 2])
-    
-    with col1:
-        if st.button("▶️ Run Pipeline", type="primary", use_container_width=True):
-            execute_pipeline()
-    
-    with col2:
-        if st.button("💾 Save Pipeline", use_container_width=True):
-            save_pipeline()
-    
-    with col3:
-        uploaded_pipeline = st.file_uploader("📂 Load Pipeline", type=['json'])
-        if uploaded_pipeline is not None:
-            load_pipeline(uploaded_pipeline)
-    
-    # Display results
-    display_pipeline_results()
+        with col1:
+            if st.button("▶️ Run Pipeline", type="primary", use_container_width=True):
+                execute_pipeline()
+        
+        with col2:
+            if st.button("💾 Save Pipeline", use_container_width=True):
+                save_pipeline()
+        
+        with col3:
+            uploaded_pipeline = st.file_uploader("📂 Load Pipeline", type=['json'])
+            if uploaded_pipeline is not None:
+                load_pipeline(uploaded_pipeline)
+        
+        # Display results
+        display_pipeline_results()
 
 def execute_pipeline():
     """Execute the complete pipeline."""
