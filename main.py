@@ -111,36 +111,51 @@ def create_preprocessing_params_ui(step_id: str) -> Dict[str, Any]:
         
         with col1:
             st.subheader("Illumination Correction")
+            st.info("💡 Corrects uneven lighting across the image. Use when background brightness varies significantly.")
+            
             apply_illum = st.checkbox("Apply Illumination Correction", key=f"illum_{step_id}")
+            
             illum_method = st.selectbox("Method", ["blur_subtract", "blur_divide"], 
-                                      key=f"illum_method_{step_id}", disabled=not apply_illum)
+                                      key=f"illum_method_{step_id}", disabled=not apply_illum,
+                                      help="blur_subtract: Subtracts blurred background (better for mild variations)\nblur_divide: Divides by blurred background (better for strong variations)")
+            
             illum_kernel = st.slider("Kernel Size", 5, 201, 65, step=10, 
-                                   key=f"illum_kernel_{step_id}", disabled=not apply_illum)
+                                   key=f"illum_kernel_{step_id}", disabled=not apply_illum,
+                                   help="Size of the blur kernel. Larger values = smoother background estimation. Should be larger than the largest features you want to preserve.")
         
         with col2:
             st.subheader("Denoising")
+            st.info("🔧 Reduces image noise while preserving important features. Choose method based on noise type.")
+            
             apply_denoise = st.checkbox("Apply Denoising", key=f"denoise_{step_id}")
             denoise_method = st.selectbox("Method", ["median", "gaussian", "bilateral", "nlm"],
-                                        key=f"denoise_method_{step_id}", disabled=not apply_denoise)
+                                        key=f"denoise_method_{step_id}", disabled=not apply_denoise,
+                                        help="median: Best for salt-and-pepper noise\ngaussian: General smoothing\nbilateral: Edge-preserving smoothing\nnlm: Advanced non-local means (slowest but best quality)")
             
             # Method-specific parameters
             denoise_params = {}
             if apply_denoise:
                 if denoise_method == "median":
                     denoise_params["median_k_size"] = st.slider("Kernel Size", 1, 15, 3, step=2, 
-                                                              key=f"median_k_{step_id}")
+                                                              key=f"median_k_{step_id}",
+                                                              help="Size of median filter. Larger values remove more noise but blur fine details. Must be odd.")
                 elif denoise_method == "gaussian":
                     denoise_params["gaussian_sigma"] = st.slider("Sigma", 0.1, 5.0, 1.0, step=0.1,
-                                                               key=f"gauss_sigma_{step_id}")
+                                                               key=f"gauss_sigma_{step_id}",
+                                                               help="Standard deviation of Gaussian kernel. Higher values = more smoothing but less detail preservation.")
                 elif denoise_method == "bilateral":
-                    denoise_params["bilateral_d"] = st.slider("Diameter", 1, 15, 5, key=f"bil_d_{step_id}")
+                    denoise_params["bilateral_d"] = st.slider("Diameter", 1, 15, 5, key=f"bil_d_{step_id}",
+                                                            help="Diameter of pixel neighborhood. Larger values = stronger filtering but slower processing.")
                     denoise_params["bilateral_sigma_color"] = st.slider("Sigma Color", 10, 150, 75, 
-                                                                      key=f"bil_sc_{step_id}")
+                                                                      key=f"bil_sc_{step_id}",
+                                                                      help="Color similarity threshold. Higher values = more aggressive smoothing of different colors.")
                     denoise_params["bilateral_sigma_space"] = st.slider("Sigma Space", 10, 150, 75,
-                                                                      key=f"bil_ss_{step_id}")
+                                                                      key=f"bil_ss_{step_id}",
+                                                                      help="Spatial distance threshold. Higher values = larger neighborhood considered for smoothing.")
                 elif denoise_method == "nlm":
                     denoise_params["nlm_h"] = st.slider("Filter Strength", 0.1, 1.0, 0.5, step=0.1,
-                                                      key=f"nlm_h_{step_id}")
+                                                      key=f"nlm_h_{step_id}",
+                                                      help="Denoising strength. Higher values remove more noise but may over-smooth textures.")
     
     return {
         'apply_illumination_correction': apply_illum,
@@ -154,49 +169,71 @@ def create_preprocessing_params_ui(step_id: str) -> Dict[str, Any]:
 def create_artifact_removal_params_ui(step_id: str) -> Dict[str, Any]:
     """Create UI for artifact removal parameters."""
     with st.expander(f"🎯 Artifact Removal Parameters (Step {step_id})", expanded=True):
-        st.info("💡 This step processes both bright and dark artifacts")
+        st.info("💡 This step processes both bright and dark artifacts. Adjust detection sensitivity and processing parameters for your specific artifacts.")
         
         col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("Bright Spot Detection")
+            st.info("🔆 Detects bright artifacts like dust, scratches, or overexposed regions.")
+            
             apply_bright = st.checkbox("Remove Bright Spots", value=True, key=f"apply_bright_{step_id}")
             bright_detection_method = st.selectbox("Detection Method", ["percentile", "otsu", "absolute"],
-                                                  key=f"bright_detect_method_{step_id}", disabled=not apply_bright)
+                                                  key=f"bright_detect_method_{step_id}", disabled=not apply_bright,
+                                                  help="percentile: Statistical threshold (most flexible)\notsu: Automatic threshold (good for bimodal images)\nabsolute: Fixed intensity threshold (most predictable)")
             
             if bright_detection_method == "percentile":
                 bright_threshold_percentile = st.slider("Threshold Percentile", 0.0, 100.0, 95.0,
-                                                       key=f"bright_thresh_perc_{step_id}", disabled=not apply_bright)
+                                                       key=f"bright_thresh_perc_{step_id}", disabled=not apply_bright,
+                                                       help="Pixels above this percentile are considered artifacts. Higher values = less sensitive (fewer artifacts detected). 95% means only the brightest 5% of pixels are considered.")
             elif bright_detection_method == "absolute":
                 bright_absolute_threshold = st.slider("Absolute Threshold", 0, 255, 200,
-                                                     key=f"bright_abs_thresh_{step_id}", disabled=not apply_bright)
+                                                     key=f"bright_abs_thresh_{step_id}", disabled=not apply_bright,
+                                                     help="Fixed intensity threshold. Pixels above this value are artifacts. Higher values = less sensitive. 255 = white, 0 = black.")
             
             st.subheader("Dark Spot Detection")
+            st.info("🔻 Detects dark artifacts like debris, shadows, or underexposed regions.")
+            
             apply_dark = st.checkbox("Remove Dark Spots", value=True, key=f"apply_dark_{step_id}")
             dark_detection_method = st.selectbox("Detection Method", ["percentile", "otsu", "absolute"],
-                                                key=f"dark_detect_method_{step_id}", disabled=not apply_dark)
+                                                key=f"dark_detect_method_{step_id}", disabled=not apply_dark,
+                                                help="Same methods as bright spots but for dark artifacts.")
             
             if dark_detection_method == "percentile":
                 dark_threshold_percentile = st.slider("Threshold Percentile", 0.0, 100.0, 5.0,
-                                                     key=f"dark_thresh_perc_{step_id}", disabled=not apply_dark)
+                                                     key=f"dark_thresh_perc_{step_id}", disabled=not apply_dark,
+                                                     help="Pixels below this percentile are considered artifacts. Lower values = less sensitive. 5% means only the darkest 5% of pixels are considered.")
             elif dark_detection_method == "absolute":
                 dark_absolute_threshold = st.slider("Absolute Threshold", 0, 255, 50,
-                                                   key=f"dark_abs_thresh_{step_id}", disabled=not apply_dark)
+                                                   key=f"dark_abs_thresh_{step_id}", disabled=not apply_dark,
+                                                   help="Fixed intensity threshold. Pixels below this value are artifacts. Lower values = less sensitive.")
         
         with col2:
             st.subheader("Processing Parameters")
-            apply_opening = st.checkbox("Apply Opening", value=True, key=f"opening_{step_id}")
+            st.info("⚙️ Controls how detected artifacts are cleaned and filtered before removal.")
+            
+            apply_opening = st.checkbox("Apply Opening", value=True, key=f"opening_{step_id}",
+                                      help="Morphological opening removes small noise pixels and separates connected artifacts.")
             opening_size = st.slider("Opening Size", 1, 15, 3, key=f"open_size_{step_id}", 
-                                   disabled=not apply_opening)
-            min_area = st.slider("Min Area", 1, 1000, 10, key=f"min_area_{step_id}")
-            max_area = st.slider("Max Area", 100, 10000, 5000, key=f"max_area_{step_id}")
+                                   disabled=not apply_opening,
+                                   help="Size of opening operation. Larger values remove smaller artifacts but may break up larger ones. Must be odd.")
+            
+            min_area = st.slider("Min Area", 1, 1000, 10, key=f"min_area_{step_id}",
+                               help="Minimum artifact size in pixels. Smaller artifacts are ignored. Increase to ignore tiny noise, decrease to catch small artifacts.")
+            max_area = st.slider("Max Area", 100, 10000, 5000, key=f"max_area_{step_id}",
+                               help="Maximum artifact size in pixels. Larger artifacts are ignored (may be actual features). Decrease if large features are being mistakenly removed.")
             
             st.subheader("Inpainting")
-            inpaint_method = st.selectbox("Inpainting Method", ["telea", "ns"], key=f"inpaint_{step_id}")
-            inpaint_radius = st.slider("Inpainting Radius", 1, 10, 3, key=f"inpaint_r_{step_id}")
+            st.info("🎨 How to fill in the removed artifact regions.")
+            
+            inpaint_method = st.selectbox("Inpainting Method", ["telea", "ns"], key=f"inpaint_{step_id}",
+                                        help="telea: Fast marching method (faster, good for most cases)\nns: Navier-Stokes method (slower, better for complex textures)")
+            inpaint_radius = st.slider("Inpainting Radius", 1, 10, 3, key=f"inpaint_r_{step_id}",
+                                     help="How far around each artifact to use for inpainting. Larger values use more context but may introduce blurring.")
             
             # Dilation parameters
-            dilation_size = st.slider("Mask Dilation Size", 0, 10, 2, key=f"dilation_{step_id}")
+            dilation_size = st.slider("Mask Dilation Size", 0, 10, 2, key=f"dilation_{step_id}",
+                                    help="Expands artifact masks before inpainting. Larger values ensure complete artifact removal but may remove more surrounding pixels.")
     
     # Compile parameters for both bright and dark spots
     params = {
@@ -245,33 +282,52 @@ def create_artifact_removal_params_ui(step_id: str) -> Dict[str, Any]:
 def create_phase_analysis_params_ui(step_id: str) -> Dict[str, Dict[str, Any]]:
     """Create UI for phase analysis parameters."""
     with st.expander(f"🧪 Phase Analysis Parameters (Step {step_id})", expanded=True):
+        st.info("🔬 Segments the material into different phases based on intensity patterns. Adjust parameters based on your material's characteristics.")
+        
         col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("Masking")
+            st.info("🎭 Creates material mask to separate sample from background.")
+            
             masking_strategy = st.selectbox("Strategy", ["fill_holes", "bright_phases"], 
-                                          key=f"mask_strat_{step_id}")
+                                          key=f"mask_strat_{step_id}",
+                                          help="fill_holes: Good for continuous materials with dark background\nbright_phases: Better when material phases are generally brighter than background")
             background_threshold = st.slider("Background Threshold", 0.0, 0.5, 0.08, step=0.01,
-                                           key=f"bg_thresh_{step_id}")
-            cleanup_area = st.slider("Cleanup Area", 0, 2000, 500, key=f"cleanup_{step_id}")
+                                           key=f"bg_thresh_{step_id}",
+                                           help="Intensity threshold to separate background from material. Lower values include more dark regions as background. Adjust if background/material separation is poor.")
+            cleanup_area = st.slider("Cleanup Area", 0, 2000, 500, key=f"cleanup_{step_id}",
+                                   help="Removes small disconnected regions from material mask. Larger values remove bigger noise regions but may remove small material features.")
             
             st.subheader("Artifact Removal")
-            dark_spot_area = st.slider("Dark Spot Fill Area", 0, 200, 50, key=f"dark_area_{step_id}")
+            st.info("🧹 Cleans up the material before phase segmentation.")
+            
+            dark_spot_area = st.slider("Dark Spot Fill Area", 0, 200, 50, key=f"dark_area_{step_id}",
+                                     help="Fills dark spots smaller than this size within material regions. Helps with imaging artifacts like pinholes or debris.")
             bright_spot_method = st.selectbox("Bright Spot Method", ["opening", "clipping"],
-                                            key=f"bright_method_{step_id}")
+                                            key=f"bright_method_{step_id}",
+                                            help="opening: Morphological opening to remove bright spots\nclipping: Intensity clipping to reduce bright outliers")
         
         with col2:
             st.subheader("Phase Detection")
-            auto_detect = st.checkbox("Auto-detect Phases", value=True, key=f"auto_detect_{step_id}")
+            st.info("🔍 Determines how many phases are present in the material.")
+            
+            auto_detect = st.checkbox("Auto-detect Phases", value=True, key=f"auto_detect_{step_id}",
+                                    help="Automatically detects number of phases using histogram analysis. Disable to manually specify phase count.")
             manual_phases = st.slider("Manual Phase Count", 1, 10, 3, disabled=auto_detect,
-                                    key=f"manual_phases_{step_id}")
+                                    key=f"manual_phases_{step_id}",
+                                    help="Number of phases to segment when auto-detection is disabled. Should match the number of distinct materials in your sample.")
             
             st.subheader("Segmentation")
+            st.info("✂️ How to separate the detected phases.")
+            
             seg_method = st.selectbox("Method", ["auto", "kmeans", "otsu", "multiotsu", "percentile"],
-                                    key=f"seg_method_{step_id}")
+                                    key=f"seg_method_{step_id}",
+                                    help="auto: Automatically chooses best method\nkmeans: Clustering based on intensity\notsu: Automatic thresholding (2 phases)\nmultiotsu: Multiple threshold levels\npercentile: Statistical intensity-based separation")
             
             if seg_method == "kmeans":
-                kmeans_random_state = st.slider("Random State", 0, 100, 42, key=f"kmeans_rs_{step_id}")
+                kmeans_random_state = st.slider("Random State", 0, 100, 42, key=f"kmeans_rs_{step_id}",
+                                               help="Random seed for reproducible clustering results. Change if you want different initialization.")
     
     return {
         'masking': {
@@ -302,27 +358,47 @@ def create_phase_analysis_params_ui(step_id: str) -> Dict[str, Dict[str, Any]]:
 def create_line_analysis_params_ui(step_id: str) -> Dict[str, Dict[str, Any]]:
     """Create UI for line analysis parameters."""
     with st.expander(f"📏 Line Analysis Parameters (Step {step_id})", expanded=True):
+        st.info("📐 Detects and analyzes linear features like grain boundaries, cracks, or fiber orientations. Requires a material mask from previous phase analysis.")
+        
         col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("Frangi Filter")
-            sigma_min = st.slider("Sigma Min", 1, 10, 1, key=f"sigma_min_{step_id}")
-            sigma_max = st.slider("Sigma Max", 2, 20, 8, key=f"sigma_max_{step_id}")
-            sigma_step = st.slider("Sigma Step", 1, 5, 2, key=f"sigma_step_{step_id}")
-            black_ridges = st.checkbox("Detect Dark Lines", key=f"black_ridges_{step_id}")
+            st.info("🔍 Enhances linear structures using multiscale filtering.")
+            
+            sigma_min = st.slider("Sigma Min", 1, 10, 1, key=f"sigma_min_{step_id}",
+                                help="Minimum scale for line detection. Smaller values detect thinner lines. Start with 1 for fine details.")
+            sigma_max = st.slider("Sigma Max", 2, 20, 8, key=f"sigma_max_{step_id}",
+                                help="Maximum scale for line detection. Larger values detect thicker lines. Should be larger than your widest lines of interest.")
+            sigma_step = st.slider("Sigma Step", 1, 5, 2, key=f"sigma_step_{step_id}",
+                                 help="Step size between scales. Smaller steps = more thorough detection but slower processing.")
+            black_ridges = st.checkbox("Detect Dark Lines", key=f"black_ridges_{step_id}",
+                                     help="Enable to detect dark lines (e.g., grain boundaries). Disable for bright lines (e.g., cracks filled with bright material).")
             
             st.subheader("Boundary Exclusion")
-            boundary_erosion = st.slider("Boundary Erosion Size", 0, 50, 10, key=f"boundary_{step_id}")
+            st.info("🚫 Excludes edge artifacts from analysis.")
+            
+            boundary_erosion = st.slider("Boundary Erosion Size", 0, 50, 10, key=f"boundary_{step_id}",
+                                        help="Excludes this many pixels from material edges. Larger values remove more edge artifacts but may miss lines near boundaries.")
         
         with col2:
             st.subheader("Hough Transform")
-            hough_threshold = st.slider("Threshold", 1, 20, 5, key=f"hough_thresh_{step_id}")
-            hough_min_length = st.slider("Min Line Length", 5, 100, 20, key=f"hough_len_{step_id}")
-            hough_max_gap = st.slider("Max Line Gap", 1, 50, 10, key=f"hough_gap_{step_id}")
+            st.info("📊 Detects straight line segments geometrically.")
+            
+            hough_threshold = st.slider("Threshold", 1, 20, 5, key=f"hough_thresh_{step_id}",
+                                      help="Minimum number of edge pixels required to form a line. Higher values = fewer, more confident line detections.")
+            hough_min_length = st.slider("Min Line Length", 5, 100, 20, key=f"hough_len_{step_id}",
+                                        help="Minimum length of detected lines in pixels. Shorter lines are ignored. Increase to focus on major features.")
+            hough_max_gap = st.slider("Max Line Gap", 1, 50, 10, key=f"hough_gap_{step_id}",
+                                    help="Maximum gap in pixels to connect line segments. Larger values connect more broken lines but may merge separate features.")
             
             st.subheader("Analysis")
-            apply_skeleton = st.checkbox("Apply Skeletonization", value=True, key=f"skeleton_{step_id}")
-            analyze_sobel = st.checkbox("Analyze Sobel Edges", value=True, key=f"sobel_{step_id}")
+            st.info("📈 Additional analysis options.")
+            
+            apply_skeleton = st.checkbox("Apply Skeletonization", value=True, key=f"skeleton_{step_id}",
+                                       help="Reduces lines to single-pixel width for cleaner analysis. Recommended for most cases.")
+            analyze_sobel = st.checkbox("Analyze Sobel Edges", value=True, key=f"sobel_{step_id}",
+                                      help="Performs edge-based orientation analysis in addition to line detection. Provides complementary information about directional patterns.")
     
     return {
         'frangi': {
