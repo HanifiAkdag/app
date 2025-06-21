@@ -564,8 +564,28 @@ def main():
     else:
         st.info("No pipeline steps added yet. Use the controls below to add steps.")
     
-    # Add step section - moved after current pipeline display
-    st.subheader("Add New Step")
+    # Configure pipeline steps (only if there are steps)
+    if st.session_state.pipeline_steps:
+        st.header("⚙️ Configure Pipeline Steps")
+        
+        # Update parameters for each step
+        for i, step in enumerate(st.session_state.pipeline_steps):
+            operation = step['operation']
+            step_id = f"{i+1}"
+            
+            if operation == 'preprocessing':
+                params = create_preprocessing_params_ui(step_id)
+            elif operation == 'artifact_removal':
+                params = create_artifact_removal_params_ui(step_id)
+            elif operation == 'phase_analysis':
+                params = create_phase_analysis_params_ui(step_id)
+            elif operation == 'line_analysis':
+                params = create_line_analysis_params_ui(step_id)
+            
+            st.session_state.pipeline_steps[i]['params'] = params
+    
+    # Add step section - moved after configuration and before execute 
+    st.header("➕ Add New Step")
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
@@ -600,25 +620,6 @@ def main():
     
     # Configure pipeline steps (only if there are steps)
     if st.session_state.pipeline_steps:
-        st.header("⚙️ Configure Pipeline Steps")
-        
-        # Update parameters for each step
-        for i, step in enumerate(st.session_state.pipeline_steps):
-            operation = step['operation']
-            step_id = f"{i+1}"
-            
-            if operation == 'preprocessing':
-                params = create_preprocessing_params_ui(step_id)
-            elif operation == 'artifact_removal':
-                params = create_artifact_removal_params_ui(step_id)
-            elif operation == 'phase_analysis':
-                params = create_phase_analysis_params_ui(step_id)
-            elif operation == 'line_analysis':
-                params = create_line_analysis_params_ui(step_id)
-            
-            st.session_state.pipeline_steps[i]['params'] = params
-        
-        # Execute pipeline section
         st.header("🚀 Execute Pipeline")
         
         col1, col2, col3 = st.columns([1, 1, 2])
