@@ -298,15 +298,6 @@ def create_phase_analysis_params_ui(step_id: str) -> Dict[str, Dict[str, Any]]:
                                            help="Intensity threshold to separate background from material. Lower values include more dark regions as background. Adjust if background/material separation is poor.")
             cleanup_area = st.slider("Cleanup Area", 0, 2000, 500, key=f"cleanup_{step_id}",
                                    help="Removes small disconnected regions from material mask. Larger values remove bigger noise regions but may remove small material features.")
-            
-            st.subheader("Artifact Removal")
-            st.info("🧹 Cleans up the material before phase segmentation.")
-            
-            dark_spot_area = st.slider("Dark Spot Fill Area", 0, 200, 50, key=f"dark_area_{step_id}",
-                                     help="Fills dark spots smaller than this size within material regions. Helps with imaging artifacts like pinholes or debris.")
-            bright_spot_method = st.selectbox("Bright Spot Method", ["opening", "clipping"],
-                                            key=f"bright_method_{step_id}",
-                                            help="opening: Morphological opening to remove bright spots\nclipping: Intensity clipping to reduce bright outliers")
         
         with col2:
             st.subheader("Phase Detection")
@@ -334,12 +325,6 @@ def create_phase_analysis_params_ui(step_id: str) -> Dict[str, Dict[str, Any]]:
             'strategy': masking_strategy,
             'background_threshold': background_threshold,
             'cleanup_area': cleanup_area
-        },
-        'artifact_removal': {
-            'dark_spot_fill_area': dark_spot_area,
-            'bright_spot_method': bright_spot_method,
-            'bright_spot_opening_size': 15,
-            'bright_spot_clip_offset': 0.05
         },
         'phase_detection': {
             'auto_detect_phases': auto_detect,
@@ -556,7 +541,6 @@ def execute_phase_analysis(image: np.ndarray, params: Dict[str, Dict[str, Any]])
     # Convert nested parameter structure to the expected format
     analysis_params = {
         'preprocessing_params': params.get('preprocessing', {}),
-        'artifact_removal_params': params.get('artifact_removal', {}),
         'masking_params': params.get('masking', {}),
         'phase_detection_params': {
             # Filter out the UI-specific parameter and only pass the method's expected parameters
@@ -710,22 +694,34 @@ def display_pipeline_results():
                             # Create phase segmentation visualization
                             analyzer = PhaseAnalyzer()
                             original_image = result.get('original_image', st.session_state.original_image)
-                            cleaned_image = result.get('cleaned_image')
+                            # Use processed_image instead of cleaned_image
+                            processed_image = result.get('processed_image')
                             phase_masks = result.get('phase_masks', [])
                             background_mask = result.get('background_mask')
                             
-                            if original_image is not None and cleaned_image is not None and phase_masks and background_mask is not None:
+                            if original_image is not None and processed_image is not None and phase_masks and background_mask is not None:
                                 # Create the segmentation visualization
                                 fig = analyzer.create_segmentation_visualization(
-                                    original_image, cleaned_image, phase_masks, background_mask,
+                                    original_image, processed_image, phase_masks, background_mask,
                                     color_mode='palette', palette_name='viridis'
                                 )
                                 st.pyplot(fig)
                                 plt.close(fig)  # Clean up to prevent memory issues
                             else:
+                                # Debug information to see what's available
                                 st.warning("⚠️ Phase segmentation visualization data not available")
+                                with st.expander("Debug: Available result keys"):
+                                    st.write("Available keys:", list(result.keys()) if result else "No result")
+                                    st.write("Original image available:", original_image is not None)
+                                    st.write("Processed image available:", processed_image is not None)
+                                    st.write("Phase masks available:", len(phase_masks) if phase_masks else 0)
+                                    st.write("Background mask available:", background_mask is not None)
                         except Exception as e:
                             st.error(f"❌ Error creating phase visualization: {str(e)}")
+                            # Additional debug info
+                            with st.expander("Debug: Exception details"):
+                                st.exception(e)
+                                st.write("Result structure:", result.keys() if result else "No result")
                         
                         # Show phase statistics
                         if phase_stats:

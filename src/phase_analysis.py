@@ -55,69 +55,6 @@ class PhaseAnalyzer:
         else:
             return float(method_or_value)
     
-    def remove_artifacts(self, 
-                        image: np.ndarray,
-                        material_mask: np.ndarray,
-                        background_mask: np.ndarray,
-                        dark_spot_fill_area: int = 50,
-                        dark_spot_threshold_method: str = 'otsu',
-                        bright_spot_method: str = 'opening',
-                        bright_spot_opening_size: int = 15,
-                        bright_spot_clip_offset: float = 0.05) -> np.ndarray:
-        """
-        Removes dark spots on material and bright spots in background.
-        
-        Args:
-            image: Input image after median filtering
-            material_mask: Binary mask of material region
-            background_mask: Binary mask of background region
-            dark_spot_fill_area: Maximum area for dark spot filling
-            dark_spot_threshold_method: Method for dark spot detection
-            bright_spot_method: Method for bright spot removal ('opening' or 'clipping')
-            bright_spot_opening_size: Size for morphological opening
-            bright_spot_clip_offset: Offset for clipping method
-            
-        Returns:
-            Cleaned image
-        """
-        image_cleaned = image.copy()
-        
-        # Fill dark spots on material using remove_small_holes
-        if dark_spot_fill_area > 0 and material_mask.any():
-            try:
-                # Get threshold for material region
-                material_pixels = image_cleaned[material_mask]
-                if material_pixels.size > 0:
-                    thresh_val = self._get_threshold_value(material_pixels, dark_spot_threshold_method)
-                    
-                    # Create binary mask and fill holes
-                    temp_binary = image_cleaned > thresh_val
-                    filled_binary = remove_small_holes(temp_binary, area_threshold=dark_spot_fill_area, connectivity=1)
-                    fill_mask = filled_binary & (~temp_binary)
-                    
-                    num_pixels_filled = np.sum(fill_mask)
-                    if num_pixels_filled > 0:
-                        image_cleaned[fill_mask] = thresh_val
-                        
-            except Exception as e:
-                pass  # Skip if error occurs
-        
-        # Remove bright spots in background
-        if bright_spot_method == 'opening' and bright_spot_opening_size > 0:
-            opened_image = morphology.opening(image_cleaned, footprint=disk(bright_spot_opening_size))
-            image_cleaned[background_mask] = opened_image[background_mask]
-            
-        elif bright_spot_method == 'clipping' and bright_spot_clip_offset > 0 and background_mask.any():
-            bg_pixels = image_cleaned[background_mask]
-            if bg_pixels.size > 0:
-                bg_median = np.median(bg_pixels)
-                clip_threshold = bg_median + bright_spot_clip_offset
-                bright_spots = (image_cleaned > clip_threshold) & background_mask
-                image_cleaned[bright_spots] = bg_median
-        
-        self.intermediate_images['artifact_removed'] = image_cleaned
-        return image_cleaned
-    
     def create_material_mask(self, 
                            image: np.ndarray,
                            strategy: str = "fill_holes",
@@ -127,7 +64,7 @@ class PhaseAnalyzer:
         Creates material and background masks using different strategies.
         
         Args:
-            image: Input image (typically median filtered)
+            image: Input image (typically preprocessed)
             strategy: Masking strategy ("fill_holes" or "bright_phases")
             background_threshold: Threshold for background identification
             cleanup_area: Area threshold for mask cleaning
@@ -182,7 +119,7 @@ class PhaseAnalyzer:
         Automatically detects the number of phases based on histogram peaks.
         
         Args:
-            image: Cleaned image for analysis
+            image: Input image for analysis
             material_mask: Binary mask of material region
             histogram_bins: Number of histogram bins
             min_distance_bins: Minimum distance between peaks
@@ -236,7 +173,7 @@ class PhaseAnalyzer:
         Segments the image into phases within the material mask.
         
         Args:
-            image: Cleaned image for segmentation
+            image: Input image for segmentation
             material_mask: Binary mask of material region
             num_phases: Number of phases to segment
             method: Segmentation method ('auto', 'otsu', 'multiotsu', 'percentile', 'kmeans', 'manual')
@@ -384,7 +321,7 @@ class PhaseAnalyzer:
     
     def create_segmentation_visualization(self, 
                                         original_image: np.ndarray,
-                                        cleaned_image: np.ndarray,
+                                        segmented_image: np.ndarray,
                                         phase_masks: List[np.ndarray],
                                         background_mask: np.ndarray,
                                         color_mode: str = 'palette',
@@ -395,7 +332,7 @@ class PhaseAnalyzer:
         
         Args:
             original_image: Original input image
-            cleaned_image: Cleaned image for intensity calculations
+            segmented_image: Image used for segmentation (for intensity calculations)
             phase_masks: List of phase masks
             background_mask: Background mask
             color_mode: Coloring mode ('palette' or 'intensity')
@@ -428,7 +365,7 @@ class PhaseAnalyzer:
             # Intensity-based coloring
             for i, p_mask in enumerate(phase_masks):
                 if p_mask.any():
-                    mean_intensity = np.mean(cleaned_image[p_mask])
+                    mean_intensity = np.mean(segmented_image[p_mask])
                     rgb_color = [mean_intensity] * 3
                     segmented_image_vis[p_mask] = rgb_color
                     label = f'Phase {i+1} (Avg: {mean_intensity:.3f})'
@@ -477,8 +414,7 @@ class PhaseAnalyzer:
     
     def create_processing_steps_visualization(self, 
                                             original_image: np.ndarray,
-                                            median_image: np.ndarray,
-                                            cleaned_image: np.ndarray,
+                                            processed_image: np.ndarray,
                                             material_mask: np.ndarray,
                                             histogram_data: Optional[Dict] = None,
                                             thresholds_or_centers: Optional[Union[List, np.ndarray]] = None,
@@ -488,8 +424,7 @@ class PhaseAnalyzer:
         
         Args:
             original_image: Original input image
-            median_image: Median filtered image
-            cleaned_image: Artifact-removed image
+            processed_image: Preprocessed image used for analysis
             material_mask: Material mask
             histogram_data: Histogram analysis data
             thresholds_or_centers: Segmentation thresholds or cluster centers
@@ -498,7 +433,7 @@ class PhaseAnalyzer:
         Returns:
             Matplotlib figure object
         """
-        fig, axes = plt.subplots(2, 3, figsize=(15, 9), constrained_layout=True)
+        fig, axes = plt.subplots(2, 2, figsize=(12, 9), constrained_layout=True)
         ax = axes.ravel()
         fig.suptitle("Phase Analysis - Processing Steps", fontsize=16)
         
@@ -510,9 +445,9 @@ class PhaseAnalyzer:
         ax[plot_idx].axis('off')
         plot_idx += 1
         
-        # 2. Median Filtered Image
-        ax[plot_idx].imshow(median_image, cmap='gray')
-        ax[plot_idx].set_title('Median Filtered')
+        # 2. Processed Image
+        ax[plot_idx].imshow(processed_image, cmap='gray')
+        ax[plot_idx].set_title('Processed Image')
         ax[plot_idx].axis('off')
         plot_idx += 1
         
@@ -522,25 +457,19 @@ class PhaseAnalyzer:
         ax[plot_idx].axis('off')
         plot_idx += 1
         
-        # 4. Cleaned Image
-        ax[plot_idx].imshow(cleaned_image, cmap='gray')
-        ax[plot_idx].set_title('Cleaned Image (Artifacts Removed)')
-        ax[plot_idx].axis('off')
-        plot_idx += 1
-        
-        # 5. Histogram
-        ax[plot_idx].set_title(f'Cleaned Material Histogram & Seg. ({segmentation_method})')
+        # 4. Histogram
+        ax[plot_idx].set_title(f'Material Histogram & Segmentation ({segmentation_method})')
         ax[plot_idx].set_xlabel("Normalized Pixel Intensity")
         ax[plot_idx].set_ylabel("Frequency")
         ax[plot_idx].grid(True, linestyle=':')
         
         # Plot histogram if available
         if material_mask.any():
-            cleaned_material_pixels = cleaned_image[material_mask]
-            if cleaned_material_pixels.size > 0:
-                hist_disp, bin_edges_disp = np.histogram(cleaned_material_pixels, bins=256, range=(0,1))
+            material_pixels = processed_image[material_mask]
+            if material_pixels.size > 0:
+                hist_disp, bin_edges_disp = np.histogram(material_pixels, bins=256, range=(0,1))
                 bin_centers_disp = 0.5 * (bin_edges_disp[1:] + bin_edges_disp[:-1])
-                ax[plot_idx].plot(bin_centers_disp, hist_disp, label='Cleaned Hist.', color='orange')
+                ax[plot_idx].plot(bin_centers_disp, hist_disp, label='Material Histogram', color='blue')
                 
                 # Add detected peaks if available
                 if histogram_data and histogram_data.get('peaks') is not None:
@@ -563,18 +492,11 @@ class PhaseAnalyzer:
                 
                 ax[plot_idx].legend(fontsize='small')
         
-        plot_idx += 1
-        
-        # Hide remaining subplot
-        for i in range(plot_idx, len(ax)):
-            ax[i].set_visible(False)
-        
         return fig
     
     def run_full_analysis(self, 
                          image: np.ndarray,
                          preprocessing_params: Dict[str, Any] = None,
-                         artifact_removal_params: Dict[str, Any] = None,
                          masking_params: Dict[str, Any] = None,
                          phase_detection_params: Dict[str, Any] = None,
                          segmentation_params: Dict[str, Any] = None,
@@ -584,8 +506,7 @@ class PhaseAnalyzer:
         
         Args:
             image: Input grayscale image (already loaded and normalized)
-            preprocessing_params: Parameters for preprocessing
-            artifact_removal_params: Parameters for artifact removal
+            preprocessing_params: Parameters for preprocessing (optional)
             masking_params: Parameters for mask creation
             phase_detection_params: Parameters for phase detection
             segmentation_params: Parameters for segmentation
@@ -596,7 +517,6 @@ class PhaseAnalyzer:
         """
         # Set default parameters
         preprocessing_params = preprocessing_params or {}
-        artifact_removal_params = artifact_removal_params or {}
         masking_params = masking_params or {}
         phase_detection_params = phase_detection_params or {}
         segmentation_params = segmentation_params or {}
@@ -612,7 +532,7 @@ class PhaseAnalyzer:
         }
         
         try:
-            # 1. Preprocessing
+            # 1. Optional preprocessing (if not done separately)
             processed_image = image.copy()
             
             if preprocessing_params.get('apply_illumination_correction', False):
@@ -637,32 +557,26 @@ class PhaseAnalyzer:
                 masking_params.get('cleanup_area', 500)
             )
             
-            # 4. Remove artifacts
-            cleaned_image = self.remove_artifacts(
-                processed_image, material_mask, background_mask,
-                **artifact_removal_params
-            )
-            
-            # 5. Phase detection (if enabled)
+            # 3. Phase detection (if enabled)
             num_phases = segmentation_params.get('num_phases', 3)
             histogram_data = None
             
             if phase_detection_params.get('auto_detect_phases', False):
                 detected_phases, peak_intensities, histogram_data = self.detect_number_of_phases(
-                    cleaned_image, material_mask, **phase_detection_params
+                    processed_image, material_mask, **phase_detection_params
                 )
                 num_phases = detected_phases
             
-            # 6. Phase segmentation
+            # 4. Phase segmentation
             phase_masks, thresholds_or_centers = self.perform_phase_segmentation(
-                cleaned_image, material_mask, num_phases,
+                processed_image, material_mask, num_phases,
                 segmentation_params.get('method', 'auto'),
                 segmentation_params.get('manual_thresholds'),
                 segmentation_params.get('kmeans_random_state', 42),
                 segmentation_params.get('kmeans_n_init', 'auto')
             )
             
-            # 7. Calculate statistics
+            # 5. Calculate statistics
             phase_stats = self.calculate_phase_statistics(phase_masks, material_mask)
             
             # Store results
@@ -681,7 +595,6 @@ class PhaseAnalyzer:
                 'phase_masks': phase_masks,
                 'material_mask': material_mask,
                 'background_mask': background_mask,
-                'cleaned_image': cleaned_image,
                 'processed_image': processed_image,
                 'original_image': image
             })
@@ -723,15 +636,7 @@ def get_default_phase_analysis_parameters() -> Dict[str, Dict[str, Any]]:
             'illumination_kernel_size': 65,
             'apply_denoising': False,
             'denoise_method': 'gaussian',
-            'denoise_params': {'gaussian_sigma': 1.0},
-            'initial_median_size': 1
-        },
-        'artifact_removal': {
-            'dark_spot_fill_area': 50,
-            'dark_spot_threshold_method': 'otsu',
-            'bright_spot_method': 'opening',
-            'bright_spot_opening_size': 15,
-            'bright_spot_clip_offset': 0.05
+            'denoise_params': {'gaussian_sigma': 1.0}
         },
         'masking': {
             'strategy': 'fill_holes',
@@ -779,8 +684,7 @@ def create_visualization_plots(analyzer: PhaseAnalyzer,
     
     # Get required data
     original_image = results.get('original_image')
-    cleaned_image = results.get('cleaned_image')
-    median_image = results.get('median_image')
+    processed_image = results.get('processed_image')
     phase_masks = results.get('phase_masks', [])
     material_mask = results.get('material_mask')
     background_mask = results.get('background_mask')
@@ -790,18 +694,18 @@ def create_visualization_plots(analyzer: PhaseAnalyzer,
     
     # Create segmentation visualization
     figures['segmentation'] = analyzer.create_segmentation_visualization(
-        original_image, cleaned_image, phase_masks, background_mask,
+        original_image, processed_image, phase_masks, background_mask,
         color_mode='palette', palette_name='viridis'
     )
     
     # Create processing steps visualization
-    if median_image is not None and material_mask is not None:
+    if processed_image is not None and material_mask is not None:
         histogram_data = results['analysis_results'].get('histogram_data')
         thresholds_or_centers = results['analysis_results'].get('thresholds_or_centers')
         segmentation_method = results['analysis_results'].get('segmentation_method', 'unknown')
         
         figures['processing_steps'] = analyzer.create_processing_steps_visualization(
-            original_image, median_image, cleaned_image, material_mask,
+            original_image, processed_image, material_mask,
             histogram_data, thresholds_or_centers, segmentation_method
         )
     
