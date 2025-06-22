@@ -290,6 +290,103 @@ class PhaseAnalyzer:
         self.intermediate_images['phase_masks'] = phase_masks
         return phase_masks, thresholds_or_centers
     
+    def run_phase_analysis_with_mask(self, 
+                                    image: np.ndarray,
+                                    material_mask: np.ndarray,
+                                    preprocessing_params: Dict[str, Any] = None,
+                                    phase_detection_params: Dict[str, Any] = None,
+                                    segmentation_params: Dict[str, Any] = None,
+                                    visualization_params: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Runs phase analysis with a pre-created material mask.
+        
+        Args:
+            image: Input grayscale image (already loaded and normalized)
+            material_mask: Pre-created material mask
+            preprocessing_params: Parameters for preprocessing (optional)
+            phase_detection_params: Parameters for phase detection
+            segmentation_params: Parameters for segmentation
+            visualization_params: Parameters for visualization
+            
+        Returns:
+            Dictionary containing all analysis results
+        """
+        # Set default parameters
+        preprocessing_params = preprocessing_params or {}
+        phase_detection_params = phase_detection_params or {}
+        segmentation_params = segmentation_params or {}
+        visualization_params = visualization_params or {}
+        
+        results = {
+            'success': True,
+            'error_message': None,
+            'intermediate_images': {},
+            'analysis_results': {},
+            'phase_statistics': {},
+            'visualizations': {}
+        }
+        
+        try:
+            # Use the input image directly (no preprocessing here)
+            processed_image = image.copy()
+            
+            # Create background mask from material mask
+            background_mask = ~material_mask
+            
+            # Store masks in intermediate images
+            self.intermediate_images['material_mask'] = material_mask
+            self.intermediate_images['background_mask'] = background_mask
+            
+            # Phase detection (if enabled)
+            num_phases = segmentation_params.get('num_phases', 3)
+            histogram_data = None
+            
+            if phase_detection_params.get('auto_detect_phases', False):
+                detected_phases, peak_intensities, histogram_data = self.detect_number_of_phases(
+                    processed_image, material_mask, **phase_detection_params
+                )
+                num_phases = detected_phases
+            
+            # Phase segmentation
+            phase_masks, thresholds_or_centers = self.perform_phase_segmentation(
+                processed_image, material_mask, num_phases,
+                segmentation_params.get('method', 'auto'),
+                segmentation_params.get('manual_thresholds'),
+                segmentation_params.get('kmeans_random_state', 42),
+                segmentation_params.get('kmeans_n_init', 'auto')
+            )
+            
+            # Calculate statistics
+            phase_stats = self.calculate_phase_statistics(phase_masks, material_mask)
+            
+            # Store results
+            results.update({
+                'intermediate_images': self.intermediate_images,
+                'analysis_results': {
+                    'num_phases_detected': num_phases,
+                    'num_phase_masks_created': len(phase_masks),
+                    'total_material_pixels': int(np.sum(material_mask)),
+                    'total_background_pixels': int(np.sum(background_mask)),
+                    'segmentation_method': segmentation_params.get('method', 'auto'),
+                    'thresholds_or_centers': thresholds_or_centers.tolist() if isinstance(thresholds_or_centers, np.ndarray) else thresholds_or_centers,
+                    'histogram_data': histogram_data
+                },
+                'phase_statistics': phase_stats,
+                'phase_masks': phase_masks,
+                'material_mask': material_mask,
+                'background_mask': background_mask,
+                'processed_image': processed_image,
+                'original_image': image
+            })
+            
+        except Exception as e:
+            results['success'] = False
+            results['error_message'] = str(e)
+            import traceback
+            traceback.print_exc()
+        
+        return results
+    
     def calculate_phase_statistics(self, 
                                  phase_masks: List[np.ndarray],
                                  material_mask: np.ndarray) -> Dict[str, Dict[str, float]]:

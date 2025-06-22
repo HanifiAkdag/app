@@ -107,7 +107,7 @@ def save_image(image: np.ndarray, filename: str, output_dir: str) -> str:
 def create_preprocessing_params_ui(step_id: str) -> Dict[str, Any]:
     """Create UI for preprocessing parameters."""
     with st.expander(f"🔧 Preprocessing Parameters (Step {step_id})", expanded=True):
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             st.subheader("Illumination Correction")
@@ -156,6 +156,21 @@ def create_preprocessing_params_ui(step_id: str) -> Dict[str, Any]:
                     denoise_params["nlm_h"] = st.slider("Filter Strength", 0.1, 1.0, 0.5, step=0.1,
                                                       key=f"nlm_h_{step_id}",
                                                       help="Denoising strength. Higher values remove more noise but may over-smooth textures.")
+        
+        with col3:
+            st.subheader("Material Masking")
+            st.info("🎭 Creates material mask to separate sample from background.")
+            
+            apply_masking = st.checkbox("Create Material Mask", key=f"masking_{step_id}", value=True)
+            
+            masking_strategy = st.selectbox("Strategy", ["fill_holes", "bright_phases"], 
+                                          key=f"mask_strat_{step_id}", disabled=not apply_masking,
+                                          help="fill_holes: Good for continuous materials with dark background\nbright_phases: Better when material phases are generally brighter than background")
+            background_threshold = st.slider("Background Threshold", 0.0, 0.5, 0.08, step=0.01,
+                                           key=f"bg_thresh_{step_id}", disabled=not apply_masking,
+                                           help="Intensity threshold to separate background from material. Lower values include more dark regions as background. Adjust if background/material separation is poor.")
+            cleanup_area = st.slider("Cleanup Area", 0, 2000, 500, key=f"cleanup_{step_id}", disabled=not apply_masking,
+                                   help="Removes small disconnected regions from material mask. Larger values remove bigger noise regions but may remove small material features.")
     
     return {
         'apply_illumination_correction': apply_illum,
@@ -163,7 +178,11 @@ def create_preprocessing_params_ui(step_id: str) -> Dict[str, Any]:
         'illumination_kernel_size': illum_kernel,
         'apply_denoising': apply_denoise,
         'denoise_method': denoise_method if apply_denoise else None,
-        'denoise_params': denoise_params
+        'denoise_params': denoise_params,
+        'apply_masking': apply_masking,
+        'masking_strategy': masking_strategy if apply_masking else None,
+        'background_threshold': background_threshold,
+        'cleanup_area': cleanup_area
     }
 
 def create_artifact_removal_params_ui(step_id: str) -> Dict[str, Any]:
@@ -282,24 +301,11 @@ def create_artifact_removal_params_ui(step_id: str) -> Dict[str, Any]:
 def create_phase_analysis_params_ui(step_id: str) -> Dict[str, Dict[str, Any]]:
     """Create UI for phase analysis parameters."""
     with st.expander(f"🧪 Phase Analysis Parameters (Step {step_id})", expanded=True):
-        st.info("🔬 Segments the material into different phases based on intensity patterns. Adjust parameters based on your material's characteristics.")
+        st.info("🔬 Segments the material into different phases based on intensity patterns. If no material mask is available from preprocessing, the entire image will be analyzed.")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("Masking")
-            st.info("🎭 Creates material mask to separate sample from background.")
-            
-            masking_strategy = st.selectbox("Strategy", ["fill_holes", "bright_phases"], 
-                                          key=f"mask_strat_{step_id}",
-                                          help="fill_holes: Good for continuous materials with dark background\nbright_phases: Better when material phases are generally brighter than background")
-            background_threshold = st.slider("Background Threshold", 0.0, 0.5, 0.08, step=0.01,
-                                           key=f"bg_thresh_{step_id}",
-                                           help="Intensity threshold to separate background from material. Lower values include more dark regions as background. Adjust if background/material separation is poor.")
-            cleanup_area = st.slider("Cleanup Area", 0, 2000, 500, key=f"cleanup_{step_id}",
-                                   help="Removes small disconnected regions from material mask. Larger values remove bigger noise regions but may remove small material features.")
-        
-        with col2:
             st.subheader("Phase Detection")
             st.info("🔍 Determines how many phases are present in the material.")
             
@@ -308,7 +314,8 @@ def create_phase_analysis_params_ui(step_id: str) -> Dict[str, Dict[str, Any]]:
             manual_phases = st.slider("Manual Phase Count", 1, 10, 3, disabled=auto_detect,
                                     key=f"manual_phases_{step_id}",
                                     help="Number of phases to segment when auto-detection is disabled. Should match the number of distinct materials in your sample.")
-            
+        
+        with col2:
             st.subheader("Segmentation")
             st.info("✂️ How to separate the detected phases.")
             
@@ -321,11 +328,6 @@ def create_phase_analysis_params_ui(step_id: str) -> Dict[str, Dict[str, Any]]:
                                                help="Random seed for reproducible clustering results. Change if you want different initialization.")
     
     return {
-        'masking': {
-            'strategy': masking_strategy,
-            'background_threshold': background_threshold,
-            'cleanup_area': cleanup_area
-        },
         'phase_detection': {
             'auto_detect_phases': auto_detect,
             'histogram_bins': 256,
@@ -343,7 +345,7 @@ def create_phase_analysis_params_ui(step_id: str) -> Dict[str, Dict[str, Any]]:
 def create_line_analysis_params_ui(step_id: str) -> Dict[str, Dict[str, Any]]:
     """Create UI for line analysis parameters."""
     with st.expander(f"📏 Line Analysis Parameters (Step {step_id})", expanded=True):
-        st.info("📐 Detects and analyzes linear features like grain boundaries, cracks, or fiber orientations. Requires a material mask from previous phase analysis.")
+        st.info("📐 Detects and analyzes linear features like grain boundaries, cracks, or fiber orientations. If no material mask is available from preprocessing, the entire image will be analyzed.")
         
         col1, col2 = st.columns(2)
         
@@ -407,9 +409,10 @@ def create_line_analysis_params_ui(step_id: str) -> Dict[str, Dict[str, Any]]:
     }
 
 # Operation execution functions
-def execute_preprocessing(image: np.ndarray, params: Dict[str, Any]) -> np.ndarray:
+def execute_preprocessing(image: np.ndarray, params: Dict[str, Any]) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """Execute preprocessing operation."""
     processed_image = image.copy()
+    material_mask = None
     
     # Convert to uint8 for OpenCV operations if needed
     if processed_image.dtype != np.uint8:
@@ -430,7 +433,20 @@ def execute_preprocessing(image: np.ndarray, params: Dict[str, Any]) -> np.ndarr
         )
     
     # Convert back to float [0,1]
-    return processed_image.astype(np.float32) / 255.0
+    processed_image = processed_image.astype(np.float32) / 255.0
+    
+    # Create material mask if requested
+    if params.get('apply_masking', False):
+        from src.phase_analysis import PhaseAnalyzer
+        analyzer = PhaseAnalyzer()
+        material_mask, _ = analyzer.create_material_mask(
+            processed_image,
+            params['masking_strategy'],
+            params['background_threshold'],
+            params['cleanup_area']
+        )
+    
+    return processed_image, material_mask
 
 def execute_artifact_removal(image: np.ndarray, params: Dict[str, Any]) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Execute artifact removal operation for both bright and dark spots."""
@@ -534,16 +550,20 @@ def execute_combined_artifact_removal(image: np.ndarray, params: Dict[str, Any])
     
     return current_image, combined_results
 
-def execute_phase_analysis(image: np.ndarray, params: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+def execute_phase_analysis(image: np.ndarray, material_mask: np.ndarray, params: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     """Execute phase analysis operation."""
     analyzer = PhaseAnalyzer()
     
-    # Convert nested parameter structure to the expected format
+    # Create a default material mask if none is provided
+    if material_mask is None:
+        st.warning("⚠️ No material mask found. Creating default mask using entire image area.")
+        # Create a mask that covers the entire image (all pixels are considered material)
+        material_mask = np.ones(image.shape, dtype=bool)
+    
+    # Convert parameter structure to the expected format (without masking params)
     analysis_params = {
-        'preprocessing_params': params.get('preprocessing', {}),
-        'masking_params': params.get('masking', {}),
+        'preprocessing_params': {},  # No preprocessing in phase analysis anymore
         'phase_detection_params': {
-            # Filter out the UI-specific parameter and only pass the method's expected parameters
             'histogram_bins': params.get('phase_detection', {}).get('histogram_bins', 256),
             'min_distance_bins': params.get('phase_detection', {}).get('min_distance_bins', 5),
             'min_prominence_ratio': params.get('phase_detection', {}).get('min_prominence_ratio', 0.05),
@@ -553,13 +573,21 @@ def execute_phase_analysis(image: np.ndarray, params: Dict[str, Dict[str, Any]])
         'visualization_params': params.get('visualization', {})
     }
     
-    results = analyzer.run_full_analysis(image, **analysis_params)
+    # Call phase analysis with material mask (default or provided)
+    results = analyzer.run_phase_analysis_with_mask(image, material_mask, **analysis_params)
     return results
 
 def execute_line_analysis(image: np.ndarray, material_mask: np.ndarray, 
                          params: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     """Execute line analysis operation."""
     analyzer = LineAnalyzer()
+    
+    # Create a default material mask if none is provided
+    if material_mask is None:
+        st.warning("⚠️ No material mask found. Creating default mask using entire image area.")
+        # Create a mask that covers the entire image (all pixels are considered material)
+        material_mask = np.ones(image.shape, dtype=bool)
+    
     results = analyzer.run_full_analysis(image, material_mask, **params)
     return results
 
@@ -621,54 +649,24 @@ def display_pipeline_results():
                     st.write("**Output Image**")
                     if isinstance(result, tuple):
                         output_image = result[0]
+                        material_mask = result[1]
                     else:
                         output_image = result
+                        material_mask = None
                     st.image(output_image, use_container_width=True)
                 
-                # Show additional info for artifact removal
-                if operation == 'artifact_removal' and isinstance(result, tuple):
-                    artifact_results = result[1]
-                    
-                    # Handle combined artifact removal results
-                    if artifact_results.get('bright_spots_processed', False) or artifact_results.get('dark_spots_processed', False):
-                        st.success("✅ Artifacts were detected and processed")
-                        
-                        # Show processing status for each type
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            if artifact_results.get('bright_spots_processed', False):
-                                st.success("🔆 Bright spots processed")
-                                bright_stats = artifact_results.get('artifact_statistics', {}).get('bright_spots', {})
-                                if bright_stats:
-                                    st.metric("Bright Components", 
-                                            bright_stats.get('initial_artifacts', {}).get('num_components', 0))
-                            else:
-                                st.info("🔆 Bright spots: not processed")
-                        
-                        with col2:
-                            if artifact_results.get('dark_spots_processed', False):
-                                st.success("🔻 Dark spots processed")
-                                dark_stats = artifact_results.get('artifact_statistics', {}).get('dark_spots', {})
-                                if dark_stats:
-                                    st.metric("Dark Components", 
-                                            dark_stats.get('initial_artifacts', {}).get('num_components', 0))
-                            else:
-                                st.info("🔻 Dark spots: not processed")
-                    
-                    # Handle legacy single-type artifact removal
-                    elif artifact_results.get('artifacts_processed', False):
-                        st.success("✅ Artifacts were detected and processed")
-                        stats = artifact_results.get('artifact_statistics', {})
-                        if stats:
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.metric("Components Detected", 
-                                        stats.get('initial_artifacts', {}).get('num_components', 0))
-                            with col2:
-                                st.metric("Coverage %", 
-                                        f"{stats.get('final_artifacts', {}).get('coverage_percent', 0):.3f}")
-                    else:
-                        st.info("ℹ️ No artifacts were detected or processed")
+                # Show material mask if created
+                if isinstance(result, tuple) and result[1] is not None:
+                    st.subheader("Material Mask")
+                    st.image(result[1], use_container_width=True)
+                    mask_stats = {
+                        "Material Pixels": int(np.sum(result[1])),
+                        "Background Pixels": int(np.sum(~result[1])),
+                        "Material Coverage": f"{np.mean(result[1]):.3f}"
+                    }
+                    col1, col2, col3 = st.columns(3)
+                    for i, (key, value) in enumerate(mask_stats.items()):
+                        [col1, col2, col3][i].metric(key, value)
             
             elif operation in ['phase_analysis', 'line_analysis']:
                 # Show analysis results
@@ -966,14 +964,25 @@ def execute_pipeline():
                 st.write(f"Executing Step {i+1}: {operation.replace('_', ' ').title()}...")
                 
                 if operation == 'preprocessing':
-                    result = execute_preprocessing(current_image, params)
+                    result, mask = execute_preprocessing(current_image, params)
                     current_image = result
-                    st.session_state.pipeline_results.append(result)
+                    
+                    # Update material mask if created
+                    if mask is not None:
+                        material_mask = mask
+                        st.session_state.material_mask = material_mask
+                    
+                    st.session_state.pipeline_results.append((result, mask))
                     
                     # Save intermediate result
                     if st.session_state.output_dir:
                         filename = f"step_{i+1}_preprocessing.png"
                         save_image(result, filename, st.session_state.output_dir)
+                        
+                        # Save material mask if created
+                        if mask is not None:
+                            mask_filename = f"step_{i+1}_material_mask.png"
+                            save_image(mask.astype(np.uint8) * 255, mask_filename, st.session_state.output_dir)
                 
                 elif operation == 'artifact_removal':
                     result, analysis_results = execute_artifact_removal(current_image, params)
@@ -986,18 +995,9 @@ def execute_pipeline():
                         save_image(result, filename, st.session_state.output_dir)
                 
                 elif operation == 'phase_analysis':
-                    # Create material mask if not available
-                    if material_mask is None:
-                        material_mask = create_auto_material_mask(current_image)
-                        st.session_state.material_mask = material_mask
-                    
-                    result = execute_phase_analysis(current_image, params)
+                    # Phase analysis will handle missing material mask internally
+                    result = execute_phase_analysis(current_image, material_mask, params)
                     st.session_state.pipeline_results.append(result)
-                    
-                    # Update material mask from phase analysis
-                    if result.get('success', False) and 'material_mask' in result:
-                        material_mask = result['material_mask']
-                        st.session_state.material_mask = material_mask
                     
                     # Save results
                     if st.session_state.output_dir and result.get('success', False):
@@ -1012,11 +1012,7 @@ def execute_pipeline():
                             json.dump(results_to_save, f, indent=2)
                 
                 elif operation == 'line_analysis':
-                    # Create material mask if not available
-                    if material_mask is None:
-                        material_mask = create_auto_material_mask(current_image)
-                        st.session_state.material_mask = material_mask
-                    
+                    # Line analysis will handle missing material mask internally
                     result = execute_line_analysis(current_image, material_mask, params)
                     st.session_state.pipeline_results.append(result)
                     
