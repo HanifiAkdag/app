@@ -418,6 +418,7 @@ def execute_preprocessing(image: np.ndarray, params: Dict[str, Any]) -> Tuple[np
     if processed_image.dtype != np.uint8:
         processed_image = (processed_image * 255).astype(np.uint8)
     
+    # Step 1: Illumination Correction
     if params['apply_illumination_correction']:
         processed_image = correct_illumination(
             processed_image,
@@ -425,6 +426,7 @@ def execute_preprocessing(image: np.ndarray, params: Dict[str, Any]) -> Tuple[np
             params['illumination_kernel_size']
         )
     
+    # Step 2: Denoising
     if params['apply_denoising']:
         processed_image = denoise_image(
             processed_image,
@@ -435,7 +437,7 @@ def execute_preprocessing(image: np.ndarray, params: Dict[str, Any]) -> Tuple[np
     # Convert back to float [0,1]
     processed_image = processed_image.astype(np.float32) / 255.0
     
-    # Create material mask if requested
+    # Step 3: Material Masking
     if params.get('apply_masking', False):
         from src.phase_analysis import PhaseAnalyzer
         analyzer = PhaseAnalyzer()
@@ -627,49 +629,155 @@ def display_pipeline_results():
         
         with st.expander(f"Step {i+1}: {operation.replace('_', ' ').title()}", expanded=True):
             if operation in ['preprocessing', 'artifact_removal']:
-                # Show before/after for processing steps
-                col1, col2 = st.columns(2)
+                # Show before/after for processing steps in full width layout
+                st.subheader("🔍 Processing Results")
                 
-                with col1:
-                    st.write("**Input Image**")
-                    if i == 0:
-                        st.image(st.session_state.original_image, use_container_width=True)
-                    else:
-                        # Find the last processing step's output
-                        prev_image = st.session_state.original_image
-                        for j in range(i):
-                            if st.session_state.pipeline_steps[j]['operation'] in ['preprocessing', 'artifact_removal']:
-                                if isinstance(st.session_state.pipeline_results[j], tuple):
-                                    prev_image = st.session_state.pipeline_results[j][0]
-                                else:
-                                    prev_image = st.session_state.pipeline_results[j]
-                        st.image(prev_image, use_container_width=True)
+                # Get input and output images
+                if i == 0:
+                    input_image = st.session_state.original_image
+                else:
+                    # Find the last processing step's output
+                    input_image = st.session_state.original_image
+                    for j in range(i):
+                        if st.session_state.pipeline_steps[j]['operation'] in ['preprocessing', 'artifact_removal']:
+                            if isinstance(st.session_state.pipeline_results[j], tuple):
+                                input_image = st.session_state.pipeline_results[j][0]
+                            else:
+                                input_image = st.session_state.pipeline_results[j]
                 
-                with col2:
-                    st.write("**Output Image**")
-                    if isinstance(result, tuple):
-                        output_image = result[0]
-                        material_mask = result[1]
-                    else:
-                        output_image = result
-                        material_mask = None
-                    st.image(output_image, use_container_width=True)
+                if isinstance(result, tuple):
+                    output_image = result[0]
+                    material_mask = result[1]
+                else:
+                    output_image = result
+                    material_mask = None
                 
-                # Show material mask if created
-                if isinstance(result, tuple) and result[1] is not None:
-                    st.subheader("Material Mask")
-                    st.image(result[1], use_container_width=True)
-                    mask_stats = {
-                        "Material Pixels": int(np.sum(result[1])),
-                        "Background Pixels": int(np.sum(~result[1])),
-                        "Material Coverage": f"{np.mean(result[1]):.3f}"
-                    }
+                # Display images in a 2x2 or 2x3 grid depending on available data
+                if material_mask is not None:
+                    # 2x3 layout for preprocessing with mask
                     col1, col2, col3 = st.columns(3)
-                    for i, (key, value) in enumerate(mask_stats.items()):
-                        [col1, col2, col3][i].metric(key, value)
+                    
+                    with col1:
+                        st.write("**Input Image**")
+                        st.image(input_image, caption="Before Processing", use_container_width=True)
+                    
+                    with col2:
+                        st.write("**After Denoising + Illumination Correction**")
+                        st.image(output_image, caption="After Processing", use_container_width=True)
+                    
+                    with col3:
+                        # Show processing statistics
+                        st.write("**Processing Statistics**")
+                        try:
+                            # Normalize for comparison
+                            input_norm = input_image if input_image.dtype != np.uint8 else input_image.astype(np.float32) / 255.0
+                            output_norm = output_image if output_image.dtype != np.uint8 else output_image.astype(np.float32) / 255.0
+                            
+                            st.metric("Input Mean", f"{input_norm.mean():.3f}")
+                            st.metric("Output Mean", f"{output_norm.mean():.3f}")
+                            st.metric("Mean Change", f"{(output_norm.mean() - input_norm.mean()):.3f}")
+                        except:
+                            st.info("Statistics not available")
+                        
+                    
+                    # Second row for additional visualizations
+                    col4, col5, col6 = st.columns(3)
+                    
+                    with col4:
+                        st.write("**Material Mask**")
+                        st.image(material_mask, caption="Material Regions", use_container_width=True)
+                    
+                    with col5:
+                        # Show masked result
+                        masked_image = output_image.copy()
+                        if output_image.dtype == np.float32 or output_image.dtype == np.float64:
+                            masked_image[~material_mask] = 0
+                        else:
+                            masked_image[~material_mask] = 0
+                        st.write("**Masked Result**")
+                        st.image(masked_image, caption="Material Only", use_container_width=True)
+                    
+                    with col6:
+                        # Show mask statistics
+                        st.write("**Mask Statistics**")
+                        mask_stats = {
+                            "Material Pixels": int(np.sum(material_mask)),
+                            "Background Pixels": int(np.sum(~material_mask)),
+                            "Coverage": f"{np.mean(material_mask):.1%}"
+                        }
+                        for key, value in mask_stats.items():
+                            st.metric(key, value)
+                
+                else:
+                    # 2x2 layout for artifact removal or preprocessing without mask
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write("**Input Image**")
+                        st.image(input_image, caption="Before Processing", use_container_width=True)
+                    
+                    with col2:
+                        st.write("**Processed Image**")
+                        st.image(output_image, caption="After Processing", use_container_width=True)
+                    
+                    # Second row for statistics only
+                    col3, col4 = st.columns(2)
+                    
+                    with col3:
+                        # Show processing statistics
+                        st.write("**Input Statistics**")
+                        try:
+                            # Normalize for comparison
+                            input_norm = input_image if input_image.dtype != np.uint8 else input_image.astype(np.float32) / 255.0
+                            
+                            st.metric("Mean", f"{input_norm.mean():.3f}")
+                            st.metric("Std", f"{input_norm.std():.3f}")
+                            st.metric("Min", f"{input_norm.min():.3f}")
+                            st.metric("Max", f"{input_norm.max():.3f}")
+                        except:
+                            st.info("Statistics not available")
+                    
+                    with col4:
+                        # Show processing statistics
+                        st.write("**Output Statistics**")
+                        try:
+                            # Normalize for comparison
+                            output_norm = output_image if output_image.dtype != np.uint8 else output_image.astype(np.float32) / 255.0
+                            
+                            st.metric("Mean", f"{output_norm.mean():.3f}")
+                            st.metric("Std", f"{output_norm.std():.3f}")
+                            st.metric("Min", f"{output_norm.min():.3f}")
+                            st.metric("Max", f"{output_norm.max():.3f}")
+                        except:
+                            st.info("Statistics not available")
+                
+                # Show additional processing information for artifact removal
+                if operation == 'artifact_removal' and isinstance(result, tuple) and len(result) > 1:
+                    analysis_results = result[1]
+                    if analysis_results.get('artifacts_processed', False):
+                        st.subheader("🎯 Artifact Removal Details")
+                        
+                        # Create metrics row
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            bright_processed = analysis_results.get('bright_spots_processed', False)
+                            st.metric("Bright Spots", "✅ Processed" if bright_processed else "⏭️ Skipped")
+                        
+                        with col2:
+                            dark_processed = analysis_results.get('dark_spots_processed', False)
+                            st.metric("Dark Spots", "✅ Processed" if dark_processed else "⏭️ Skipped")
+                        
+                        with col3:
+                            inpaint_method = analysis_results.get('analysis_results', {}).get('inpainting_method', 'N/A')
+                            st.metric("Inpainting Method", inpaint_method.upper() if inpaint_method != 'N/A' else 'N/A')
+                        
+                        with col4:
+                            total_processed = analysis_results.get('analysis_results', {}).get('total_artifacts_processed', False)
+                            st.metric("Artifacts Found", "Yes" if total_processed else "None")
             
             elif operation in ['phase_analysis', 'line_analysis']:
-                # Show analysis results
+                # Show analysis results in full width
                 if result.get('success', False):
                     st.success("✅ Analysis completed successfully")
                     
@@ -677,22 +785,25 @@ def display_pipeline_results():
                         analysis_results = result['analysis_results']
                         phase_stats = result['phase_statistics']
                         
-                        # Metrics
-                        col1, col2, col3 = st.columns(3)
+                        # Metrics in full width
+                        col1, col2, col3, col4 = st.columns(4)
                         with col1:
                             st.metric("Phases Detected", analysis_results['num_phases_detected'])
                         with col2:
                             st.metric("Material Pixels", analysis_results['total_material_pixels'])
                         with col3:
-                            st.metric("Method", analysis_results['segmentation_method'])
+                            st.metric("Segmentation Method", analysis_results['segmentation_method'])
+                        with col4:
+                            if phase_stats:
+                                total_fraction = sum(stats['fraction'] for stats in phase_stats.values())
+                                st.metric("Material Coverage", f"{total_fraction:.1%}")
                         
-                        # Show phase segmentation visualization
+                        # Show phase segmentation visualization in full width
                         st.subheader("📊 Phase Segmentation Visualization")
                         try:
                             # Create phase segmentation visualization
                             analyzer = PhaseAnalyzer()
                             original_image = result.get('original_image', st.session_state.original_image)
-                            # Use processed_image instead of cleaned_image
                             processed_image = result.get('processed_image')
                             phase_masks = result.get('phase_masks', [])
                             background_mask = result.get('background_mask')
@@ -703,41 +814,35 @@ def display_pipeline_results():
                                     original_image, processed_image, phase_masks, background_mask,
                                     color_mode='palette', palette_name='viridis'
                                 )
-                                st.pyplot(fig)
-                                plt.close(fig)  # Clean up to prevent memory issues
+                                st.pyplot(fig, use_container_width=True)
+                                plt.close(fig)
                             else:
-                                # Debug information to see what's available
                                 st.warning("⚠️ Phase segmentation visualization data not available")
-                                with st.expander("Debug: Available result keys"):
-                                    st.write("Available keys:", list(result.keys()) if result else "No result")
-                                    st.write("Original image available:", original_image is not None)
-                                    st.write("Processed image available:", processed_image is not None)
-                                    st.write("Phase masks available:", len(phase_masks) if phase_masks else 0)
-                                    st.write("Background mask available:", background_mask is not None)
                         except Exception as e:
                             st.error(f"❌ Error creating phase visualization: {str(e)}")
-                            # Additional debug info
-                            with st.expander("Debug: Exception details"):
-                                st.exception(e)
-                                st.write("Result structure:", result.keys() if result else "No result")
                         
-                        # Show phase statistics
+                        # Show phase statistics in a table with full width
                         if phase_stats:
                             st.subheader("📈 Phase Statistics")
+                            
+                            # Create a more detailed statistics display
                             stats_data = []
                             for phase_name, stats in phase_stats.items():
                                 stats_data.append({
                                     "Phase": phase_name.replace('_', ' ').title(),
-                                    "Pixels": stats['pixels'],
-                                    "Area Fraction": f"{stats['fraction']:.4f}"
+                                    "Pixels": f"{stats['pixels']:,}",
+                                    "Area Fraction": f"{stats['fraction']:.4f}",
+                                    "Percentage": f"{stats['fraction']*100:.2f}%"
                                 })
+                            
+                            # Display as a proper table
                             st.table(stats_data)
                     
                     elif operation == 'line_analysis':
                         analysis_results = result['analysis_results']
                         
-                        # Metrics
-                        col1, col2, col3 = st.columns(3)
+                        # Metrics in full width
+                        col1, col2, col3, col4 = st.columns(4)
                         with col1:
                             st.metric("Lines Detected", analysis_results['num_lines_detected'])
                         with col2:
@@ -750,24 +855,31 @@ def display_pipeline_results():
                                 st.metric("Dominant Sobel Angle", f"{analysis_results['dominant_sobel_angle']:.1f}°")
                             else:
                                 st.metric("Dominant Sobel Angle", "N/A")
+                        with col4:
+                            # Show line density or other relevant metric
+                            original_image = result.get('original_image', st.session_state.original_image)
+                            if original_image is not None and analysis_results['num_lines_detected'] > 0:
+                                total_pixels = original_image.shape[0] * original_image.shape[1]
+                                line_density = analysis_results['num_lines_detected'] / (total_pixels / 10000)  # per 10k pixels
+                                st.metric("Line Density", f"{line_density:.2f}/10k px")
+                            else:
+                                st.metric("Line Density", "N/A")
                         
-                        # Show line analysis visualization
+                        # Show line analysis visualization in full width
                         st.subheader("📏 Line Analysis Visualization")
                         try:
                             # Create line analysis visualization
                             analyzer = LineAnalyzer()
                             original_image = result.get('original_image', st.session_state.original_image)
-                            intermediate_images = result.get('intermediate_images', {})
                             
-                            if original_image is not None and intermediate_images:
-                                # Try to create visualizations from available data
+                            if original_image is not None:
                                 lines = result.get('analysis_results', {}).get('lines', [])
                                 
                                 if lines:
                                     fig = analyzer.create_visualization_overlay(
                                         original_image, lines, colormap='hsv'
                                     )
-                                    st.pyplot(fig)
+                                    st.pyplot(fig, use_container_width=True)
                                     plt.close(fig)
                                 else:
                                     st.warning("⚠️ No lines detected for visualization")
