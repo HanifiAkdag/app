@@ -113,7 +113,7 @@ def create_preprocessing_params_ui(step_id: str) -> Dict[str, Any]:
             st.subheader("Illumination Correction")
             st.info("💡 Corrects uneven lighting across the image. Use when background brightness varies significantly.")
             
-            apply_illum = st.checkbox("Apply Illumination Correction", key=f"illum_{step_id}")
+            apply_illum = st.checkbox("Apply Illumination Correction", key=f"illum_{step_id}", value=True)
             
             illum_method = st.selectbox("Method", ["blur_subtract", "blur_divide"], 
                                       key=f"illum_method_{step_id}", disabled=not apply_illum,
@@ -127,7 +127,7 @@ def create_preprocessing_params_ui(step_id: str) -> Dict[str, Any]:
             st.subheader("Denoising")
             st.info("🔧 Reduces image noise while preserving important features. Choose method based on noise type.")
             
-            apply_denoise = st.checkbox("Apply Denoising", key=f"denoise_{step_id}")
+            apply_denoise = st.checkbox("Apply Denoising", key=f"denoise_{step_id}", value=True)
             denoise_method = st.selectbox("Method", ["median", "gaussian", "bilateral", "nlm"],
                                         key=f"denoise_method_{step_id}", disabled=not apply_denoise,
                                         help="median: Best for salt-and-pepper noise\ngaussian: General smoothing\nbilateral: Edge-preserving smoothing\nnlm: Advanced non-local means (slowest but best quality)")
@@ -552,7 +552,24 @@ def execute_combined_artifact_removal(image: np.ndarray, params: Dict[str, Any])
 def execute_phase_analysis(image: np.ndarray, params: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     """Execute phase analysis operation."""
     analyzer = PhaseAnalyzer()
-    results = analyzer.run_full_analysis(image, **params)
+    
+    # Convert nested parameter structure to the expected format
+    analysis_params = {
+        'preprocessing_params': params.get('preprocessing', {}),
+        'artifact_removal_params': params.get('artifact_removal', {}),
+        'masking_params': params.get('masking', {}),
+        'phase_detection_params': {
+            # Filter out the UI-specific parameter and only pass the method's expected parameters
+            'histogram_bins': params.get('phase_detection', {}).get('histogram_bins', 256),
+            'min_distance_bins': params.get('phase_detection', {}).get('min_distance_bins', 5),
+            'min_prominence_ratio': params.get('phase_detection', {}).get('min_prominence_ratio', 0.05),
+            'default_phases': params.get('phase_detection', {}).get('default_phases', 3)
+        },
+        'segmentation_params': params.get('segmentation', {}),
+        'visualization_params': params.get('visualization', {})
+    }
+    
+    results = analyzer.run_full_analysis(image, **analysis_params)
     return results
 
 def execute_line_analysis(image: np.ndarray, material_mask: np.ndarray, 
@@ -879,6 +896,21 @@ def execute_pipeline():
     current_image = st.session_state.original_image.copy()
     material_mask = st.session_state.material_mask
     
+    def prepare_for_json(obj):
+        """Recursively prepare object for JSON serialization."""
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, (np.integer, np.floating)):
+            return obj.item()
+        elif isinstance(obj, dict):
+            return {k: prepare_for_json(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [prepare_for_json(item) for item in obj]
+        elif isinstance(obj, (str, int, float, bool)) or obj is None:
+            return obj
+        else:
+            return str(obj)
+    
     with st.spinner("Executing pipeline..."):
         for i, step in enumerate(st.session_state.pipeline_steps):
             operation = step['operation']
@@ -927,15 +959,8 @@ def execute_pipeline():
                         results_file = f"step_{i+1}_phase_analysis_results.json"
                         results_path = os.path.join(st.session_state.output_dir, results_file)
                         
-                        # Prepare results for JSON
-                        results_to_save = {}
-                        for key, value in result.items():
-                            if isinstance(value, (str, int, float, bool, list, dict)) or value is None:
-                                results_to_save[key] = value
-                            elif hasattr(value, 'tolist'):
-                                results_to_save[key] = value.tolist()
-                            else:
-                                results_to_save[key] = str(value)
+                        # Prepare results for JSON using the recursive function
+                        results_to_save = prepare_for_json(result)
                         
                         with open(results_path, 'w') as f:
                             json.dump(results_to_save, f, indent=2)
@@ -955,15 +980,8 @@ def execute_pipeline():
                         results_file = f"step_{i+1}_line_analysis_results.json"
                         results_path = os.path.join(st.session_state.output_dir, results_file)
                         
-                        # Prepare results for JSON
-                        results_to_save = {}
-                        for key, value in result.items():
-                            if isinstance(value, (str, int, float, bool, list, dict)) or value is None:
-                                results_to_save[key] = value
-                            elif hasattr(value, 'tolist'):
-                                results_to_save[key] = value.tolist()
-                            else:
-                                results_to_save[key] = str(value)
+                        # Prepare results for JSON using the recursive function
+                        results_to_save = prepare_for_json(result)
                         
                         with open(results_path, 'w') as f:
                             json.dump(results_to_save, f, indent=2)
