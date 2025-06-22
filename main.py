@@ -695,6 +695,7 @@ def display_pipeline_results():
                         analysis_results = result['analysis_results']
                         phase_stats = result['phase_statistics']
                         
+                        # Metrics
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             st.metric("Phases Detected", analysis_results['num_phases_detected'])
@@ -703,9 +704,32 @@ def display_pipeline_results():
                         with col3:
                             st.metric("Method", analysis_results['segmentation_method'])
                         
+                        # Show phase segmentation visualization
+                        st.subheader("📊 Phase Segmentation Visualization")
+                        try:
+                            # Create phase segmentation visualization
+                            analyzer = PhaseAnalyzer()
+                            original_image = result.get('original_image', st.session_state.original_image)
+                            cleaned_image = result.get('cleaned_image')
+                            phase_masks = result.get('phase_masks', [])
+                            background_mask = result.get('background_mask')
+                            
+                            if original_image is not None and cleaned_image is not None and phase_masks and background_mask is not None:
+                                # Create the segmentation visualization
+                                fig = analyzer.create_segmentation_visualization(
+                                    original_image, cleaned_image, phase_masks, background_mask,
+                                    color_mode='palette', palette_name='viridis'
+                                )
+                                st.pyplot(fig)
+                                plt.close(fig)  # Clean up to prevent memory issues
+                            else:
+                                st.warning("⚠️ Phase segmentation visualization data not available")
+                        except Exception as e:
+                            st.error(f"❌ Error creating phase visualization: {str(e)}")
+                        
                         # Show phase statistics
                         if phase_stats:
-                            st.write("**Phase Statistics:**")
+                            st.subheader("📈 Phase Statistics")
                             stats_data = []
                             for phase_name, stats in phase_stats.items():
                                 stats_data.append({
@@ -718,6 +742,7 @@ def display_pipeline_results():
                     elif operation == 'line_analysis':
                         analysis_results = result['analysis_results']
                         
+                        # Metrics
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             st.metric("Lines Detected", analysis_results['num_lines_detected'])
@@ -731,6 +756,31 @@ def display_pipeline_results():
                                 st.metric("Dominant Sobel Angle", f"{analysis_results['dominant_sobel_angle']:.1f}°")
                             else:
                                 st.metric("Dominant Sobel Angle", "N/A")
+                        
+                        # Show line analysis visualization
+                        st.subheader("📏 Line Analysis Visualization")
+                        try:
+                            # Create line analysis visualization
+                            analyzer = LineAnalyzer()
+                            original_image = result.get('original_image', st.session_state.original_image)
+                            intermediate_images = result.get('intermediate_images', {})
+                            
+                            if original_image is not None and intermediate_images:
+                                # Try to create visualizations from available data
+                                lines = result.get('analysis_results', {}).get('lines', [])
+                                
+                                if lines:
+                                    fig = analyzer.create_visualization_overlay(
+                                        original_image, lines, colormap='hsv'
+                                    )
+                                    st.pyplot(fig)
+                                    plt.close(fig)
+                                else:
+                                    st.warning("⚠️ No lines detected for visualization")
+                            else:
+                                st.warning("⚠️ Line analysis visualization data not available")
+                        except Exception as e:
+                            st.error(f"❌ Error creating line visualization: {str(e)}")
                 else:
                     st.error(f"❌ Analysis failed: {result.get('error_message', 'Unknown error')}")
 
