@@ -737,7 +737,15 @@ def execute_line_analysis(image: np.ndarray, material_mask: np.ndarray,
         # Create a mask that covers the entire image (all pixels are considered material)
         material_mask = np.ones(image.shape, dtype=bool)
     
-    results = analyzer.run_full_analysis(image, material_mask, **params)
+    # Map parameters to the expected format for LineAnalyzer.run_full_analysis
+    analysis_params = {
+        'preprocessing_params': params.get('preprocessing', {}),
+        'frangi_params': params.get('frangi', {}),
+        'hough_params': params.get('hough', {}),
+        'analysis_params': params.get('analysis', {})
+    }
+    
+    results = analyzer.run_full_analysis(image, material_mask, **analysis_params)
     return results
 
 def create_auto_material_mask(image: np.ndarray) -> np.ndarray:
@@ -1038,18 +1046,54 @@ def display_pipeline_results():
                         st.subheader("📏 Line Analysis Visualization")
                         try:
                             # Create line analysis visualization
-                            analyzer = LineAnalyzer()
                             original_image = result.get('original_image', st.session_state.original_image)
                             
                             if original_image is not None:
-                                lines = result.get('analysis_results', {}).get('lines', [])
+                                # Get lines from visualizations data
+                                visualizations = result.get('visualizations', {})
+                                hough_lines_data = visualizations.get('hough_lines', {})
+                                lines = hough_lines_data.get('lines', [])
                                 
                                 if lines:
+                                    analyzer = LineAnalyzer()
+                                    
+                                    # Create line overlay visualization
                                     fig = analyzer.create_visualization_overlay(
                                         original_image, lines, colormap='hsv'
                                     )
                                     st.pyplot(fig, use_container_width=True)
                                     plt.close(fig)
+                                    
+                                    # Create and show histograms if available
+                                    histograms = result.get('histograms', {})
+                                    if histograms:
+                                        st.subheader("📊 Orientation Histograms")
+                                        
+                                        # Create columns for histograms
+                                        hist_cols = st.columns(2)
+                                        
+                                        # Hough histogram
+                                        if 'hough' in histograms:
+                                            with hist_cols[0]:
+                                                hough_data = histograms['hough']
+                                                hough_fig = analyzer.create_histogram_plot(
+                                                    hough_data['hist'], hough_data['bins'], hough_data['dominant'],
+                                                    "Hough Line Orientations", 'blue'
+                                                )
+                                                st.pyplot(hough_fig, use_container_width=True)
+                                                plt.close(hough_fig)
+                                        
+                                        # Sobel histogram
+                                        if 'sobel' in histograms:
+                                            with hist_cols[1]:
+                                                sobel_data = histograms['sobel']
+                                                sobel_fig = analyzer.create_histogram_plot(
+                                                    sobel_data['hist'], sobel_data['bins'], sobel_data['dominant'],
+                                                    "Sobel Edge Orientations", 'green'
+                                                )
+                                                st.pyplot(sobel_fig, use_container_width=True)
+                                                plt.close(sobel_fig)
+                                
                                 else:
                                     st.warning("⚠️ No lines detected for visualization")
                             else:
