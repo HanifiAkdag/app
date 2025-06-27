@@ -795,10 +795,23 @@ def display_pipeline_results():
                 
                 if isinstance(result, tuple):
                     output_image = result[0]
-                    material_mask = result[1]
+                    # Check operation type to determine what the second element is
+                    if operation == 'preprocessing':
+                        # Preprocessing returns (image, material_mask)
+                        material_mask = result[1]
+                        analysis_results = None
+                    elif operation == 'artifact_removal':
+                        # Artifact removal returns (image, analysis_results_dict)
+                        material_mask = None
+                        analysis_results = result[1]
+                    else:
+                        # Other operations might return different tuple formats
+                        material_mask = None
+                        analysis_results = None
                 else:
                     output_image = result
                     material_mask = None
+                    analysis_results = None
                 
                 # Display images in a 2x2 or 2x3 grid depending on available data
                 if material_mask is not None:
@@ -833,28 +846,38 @@ def display_pipeline_results():
                     
                     with col4:
                         st.write("**Material Mask**")
-                        st.image(material_mask, caption="Material Regions", use_container_width=True)
+                        if material_mask is not None and isinstance(material_mask, np.ndarray):
+                            st.image(material_mask, caption="Material Regions", use_container_width=True)
+                        else:
+                            st.info("No material mask available")
                     
                     with col5:
                         # Show masked result
-                        masked_image = output_image.copy()
-                        if output_image.dtype == np.float32 or output_image.dtype == np.float64:
-                            masked_image[~material_mask] = 0
+                        if material_mask is not None and isinstance(material_mask, np.ndarray):
+                            masked_image = output_image.copy()
+                            if output_image.dtype == np.float32 or output_image.dtype == np.float64:
+                                masked_image[~material_mask] = 0
+                            else:
+                                masked_image[~material_mask] = 0
+                            st.write("**Masked Result**")
+                            st.image(masked_image, caption="Material Only", use_container_width=True)
                         else:
-                            masked_image[~material_mask] = 0
-                        st.write("**Masked Result**")
-                        st.image(masked_image, caption="Material Only", use_container_width=True)
+                            st.write("**Masked Result**")
+                            st.info("No material mask available")
                     
                     with col6:
                         # Show mask statistics
                         st.write("**Mask Statistics**")
-                        mask_stats = {
-                            "Material Pixels": int(np.sum(material_mask)),
-                            "Background Pixels": int(np.sum(~material_mask)),
-                            "Coverage": f"{np.mean(material_mask):.1%}"
-                        }
-                        for key, value in mask_stats.items():
-                            st.metric(key, value)
+                        if material_mask is not None and isinstance(material_mask, np.ndarray):
+                            mask_stats = {
+                                "Material Pixels": int(np.sum(material_mask)),
+                                "Background Pixels": int(np.sum(~material_mask)),
+                                "Coverage": f"{np.mean(material_mask):.1%}"
+                            }
+                            for key, value in mask_stats.items():
+                                st.metric(key, value)
+                        else:
+                            st.info("No material mask statistics available")
                 
                 else:
                     # 2x2 layout for artifact removal or preprocessing without mask
@@ -900,8 +923,7 @@ def display_pipeline_results():
                             st.info("Statistics not available")
                 
                 # Show additional processing information for artifact removal
-                if operation == 'artifact_removal' and isinstance(result, tuple) and len(result) > 1:
-                    analysis_results = result[1]
+                if operation == 'artifact_removal' and analysis_results is not None:
                     if analysis_results.get('artifacts_processed', False):
                         st.subheader("🎯 Artifact Removal Details")
                         
