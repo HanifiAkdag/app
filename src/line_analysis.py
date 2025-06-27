@@ -313,10 +313,13 @@ class LineAnalyzer:
         Returns:
             Matplotlib figure object
         """
-        fig, ax = plt.subplots(figsize=(10, 8))
+        fig, ax = plt.subplots(figsize=(12, 8))
         ax.imshow(image, cmap='gray')
         
         if lines:
+            import matplotlib.patches as mpatches
+            from matplotlib.cm import ScalarMappable
+            
             cmap = plt.get_cmap(colormap)
             angles = self.calculate_line_orientations(lines)
             norm = Normalize(vmin=0, vmax=180)
@@ -325,6 +328,16 @@ class LineAnalyzer:
                 p0, p1 = line
                 color = cmap(norm(angle))
                 ax.plot([p0[0], p1[0]], [p0[1], p1[1]], color=color, linewidth=2, alpha=0.7)
+            
+            # Add colorbar for orientation angles
+            sm = ScalarMappable(norm=norm, cmap=cmap)
+            sm.set_array([])  # Required for ScalarMappable
+            
+            # Create colorbar with proper positioning
+            cbar = plt.colorbar(sm, ax=ax, fraction=0.046, pad=0.04, shrink=0.8)
+            cbar.set_label('Line Orientation (degrees)', rotation=270, labelpad=20)
+            cbar.set_ticks([0, 30, 60, 90, 120, 150, 180])
+            cbar.set_ticklabels(['0°', '30°', '60°', '90°', '120°', '150°', '180°'])
         
         ax.set_title(f'Detected Lines ({len(lines) if lines else 0} lines)')
         ax.axis('off')
