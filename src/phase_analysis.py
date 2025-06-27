@@ -11,7 +11,7 @@ from typing import Dict, List, Tuple, Optional, Any, Union
 import os
 
 from .utils import load_and_prepare_image
-from .preprocessing import correct_illumination, denoise_image
+from .preprocessing import correct_illumination, denoise_image, create_material_mask
 
 class PhaseAnalyzer:
     """
@@ -22,93 +22,7 @@ class PhaseAnalyzer:
         self.results = {}
         self.intermediate_images = {}
     
-    def _get_threshold_value(self, 
-                           image: np.ndarray, 
-                           method_or_value: Union[str, float]) -> float:
-        """
-        Helper to get threshold value from method name or direct value.
-        
-        Args:
-            image: Input image region
-            method_or_value: Threshold method name or direct float value
-            
-        Returns:
-            Threshold value
-        """
-        if image.size == 0:
-            return 0.5
-        
-        if isinstance(method_or_value, str):
-            method_name = method_or_value.lower()
-            try:
-                if method_name == 'multiotsu':
-                    return filters.threshold_otsu(image)
-                
-                thresh_func = getattr(filters, f'threshold_{method_name}')
-                return thresh_func(image)
-            except (AttributeError, ValueError) as e:
-                # Fallback to Otsu
-                min_val, max_val = np.min(image), np.max(image)
-                if np.isclose(min_val, max_val):
-                    return (min_val + max_val) / 2.0
-                return filters.threshold_otsu(image)
-        else:
-            return float(method_or_value)
-    
-    def create_material_mask(self, 
-                           image: np.ndarray,
-                           strategy: str = "fill_holes",
-                           background_threshold: Union[str, float] = 0.08,
-                           cleanup_area: int = 500) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Creates material and background masks using different strategies.
-        
-        Args:
-            image: Input image (typically preprocessed)
-            strategy: Masking strategy ("fill_holes" or "bright_phases")
-            background_threshold: Threshold for background identification
-            cleanup_area: Area threshold for mask cleaning
-            
-        Returns:
-            Tuple of (material_mask, background_mask)
-        """
-        if strategy == "fill_holes":
-            # Identify background pixels (very dark)
-            thresh_bg = self._get_threshold_value(image, background_threshold)
-            background_only_mask = image < thresh_bg
-            
-            # Invert to get everything else (material + internal holes)
-            initial_mask = ~background_only_mask
-            
-            # Fill internal holes
-            filled_mask = binary_fill_holes(initial_mask)
-            
-            # Optional cleanup of external objects
-            if cleanup_area > 0 and filled_mask.any():
-                final_material_mask = remove_small_objects(filled_mask, min_size=cleanup_area, connectivity=1)
-            else:
-                final_material_mask = filled_mask
-                
-        elif strategy == "bright_phases":
-            # Original method: threshold for brighter phases
-            thresh_bright = self._get_threshold_value(image, background_threshold)
-            final_material_mask = image > thresh_bright
-            
-            if cleanup_area > 0:
-                final_material_mask = remove_small_objects(final_material_mask, min_size=cleanup_area, connectivity=1)
-                final_material_mask = remove_small_holes(final_material_mask, area_threshold=cleanup_area, connectivity=1)
-        
-        else:
-            raise ValueError(f"Unknown masking strategy: {strategy}")
-        
-        background_mask = ~final_material_mask
-        
-        self.intermediate_images['material_mask'] = final_material_mask
-        self.intermediate_images['background_mask'] = background_mask
-        
-        return final_material_mask, background_mask
-    
-    def detect_number_of_phases(self, 
+    def detect_number_of_phases(self,
                               image: np.ndarray,
                               material_mask: np.ndarray,
                               histogram_bins: int = 256,
@@ -290,102 +204,6 @@ class PhaseAnalyzer:
         self.intermediate_images['phase_masks'] = phase_masks
         return phase_masks, thresholds_or_centers
     
-    def run_phase_analysis_with_mask(self, 
-                                    image: np.ndarray,
-                                    material_mask: np.ndarray,
-                                    preprocessing_params: Dict[str, Any] = None,
-                                    phase_detection_params: Dict[str, Any] = None,
-                                    segmentation_params: Dict[str, Any] = None,
-                                    visualization_params: Dict[str, Any] = None) -> Dict[str, Any]:
-        """
-        Runs phase analysis with a pre-created material mask.
-        
-        Args:
-            image: Input grayscale image (already loaded and normalized)
-            material_mask: Pre-created material mask
-            preprocessing_params: Parameters for preprocessing (optional)
-            phase_detection_params: Parameters for phase detection
-            segmentation_params: Parameters for segmentation
-            visualization_params: Parameters for visualization
-            
-        Returns:
-            Dictionary containing all analysis results
-        """
-        # Set default parameters
-        preprocessing_params = preprocessing_params or {}
-        phase_detection_params = phase_detection_params or {}
-        segmentation_params = segmentation_params or {}
-        visualization_params = visualization_params or {}
-        
-        results = {
-            'success': True,
-            'error_message': None,
-            'intermediate_images': {},
-            'analysis_results': {},
-            'phase_statistics': {},
-            'visualizations': {}
-        }
-        
-        try:
-            # Use the input image directly (no preprocessing here)
-            processed_image = image.copy()
-            
-            # Create background mask from material mask
-            background_mask = ~material_mask
-            
-            # Store masks in intermediate images
-            self.intermediate_images['material_mask'] = material_mask
-            self.intermediate_images['background_mask'] = background_mask
-            
-            # Phase detection (if enabled)
-            num_phases = segmentation_params.get('num_phases', 3)
-            histogram_data = None
-            
-            if phase_detection_params.get('auto_detect_phases', False):
-                detected_phases, peak_intensities, histogram_data = self.detect_number_of_phases(
-                    processed_image, material_mask, **phase_detection_params
-                )
-                num_phases = detected_phases
-            
-            # Phase segmentation
-            phase_masks, thresholds_or_centers = self.perform_phase_segmentation(
-                processed_image, material_mask, num_phases,
-                segmentation_params.get('method', 'auto'),
-                segmentation_params.get('manual_thresholds'),
-                segmentation_params.get('kmeans_random_state', 42),
-                segmentation_params.get('kmeans_n_init', 'auto')
-            )
-            
-            # Calculate statistics
-            phase_stats = self.calculate_phase_statistics(phase_masks, material_mask)
-            
-            # Store results
-            results.update({
-                'intermediate_images': self.intermediate_images,
-                'analysis_results': {
-                    'num_phases_detected': num_phases,
-                    'num_phase_masks_created': len(phase_masks),
-                    'total_material_pixels': int(np.sum(material_mask)),
-                    'total_background_pixels': int(np.sum(background_mask)),
-                    'segmentation_method': segmentation_params.get('method', 'auto'),
-                    'thresholds_or_centers': thresholds_or_centers.tolist() if isinstance(thresholds_or_centers, np.ndarray) else thresholds_or_centers,
-                    'histogram_data': histogram_data
-                },
-                'phase_statistics': phase_stats,
-                'phase_masks': phase_masks,
-                'material_mask': material_mask,
-                'background_mask': background_mask,
-                'processed_image': processed_image,
-                'original_image': image
-            })
-            
-        except Exception as e:
-            results['success'] = False
-            results['error_message'] = str(e)
-            import traceback
-            traceback.print_exc()
-        
-        return results
     
     def calculate_phase_statistics(self, 
                                  phase_masks: List[np.ndarray],
@@ -593,18 +411,18 @@ class PhaseAnalyzer:
     
     def run_full_analysis(self, 
                          image: np.ndarray,
+                         material_mask: np.ndarray,
                          preprocessing_params: Dict[str, Any] = None,
-                         masking_params: Dict[str, Any] = None,
                          phase_detection_params: Dict[str, Any] = None,
                          segmentation_params: Dict[str, Any] = None,
                          visualization_params: Dict[str, Any] = None) -> Dict[str, Any]:
         """
-        Runs the complete phase analysis pipeline.
+        Runs the complete phase analysis pipeline with a provided material mask.
         
         Args:
             image: Input grayscale image (already loaded and normalized)
+            material_mask: Binary mask defining the material region to analyze
             preprocessing_params: Parameters for preprocessing (optional)
-            masking_params: Parameters for mask creation
             phase_detection_params: Parameters for phase detection
             segmentation_params: Parameters for segmentation
             visualization_params: Parameters for visualization
@@ -614,7 +432,6 @@ class PhaseAnalyzer:
         """
         # Set default parameters
         preprocessing_params = preprocessing_params or {}
-        masking_params = masking_params or {}
         phase_detection_params = phase_detection_params or {}
         segmentation_params = segmentation_params or {}
         visualization_params = visualization_params or {}
@@ -646,13 +463,12 @@ class PhaseAnalyzer:
                     **preprocessing_params.get('denoise_params', {})
                 )
             
-            # 2. Create material mask
-            material_mask, background_mask = self.create_material_mask(
-                processed_image,
-                masking_params.get('strategy', 'fill_holes'),
-                masking_params.get('background_threshold', 0.08),
-                masking_params.get('cleanup_area', 500)
-            )
+            # 2. Use provided material mask
+            background_mask = ~material_mask
+            
+            # Store masks in intermediate images
+            self.intermediate_images['material_mask'] = material_mask
+            self.intermediate_images['background_mask'] = background_mask
             
             # 3. Phase detection (if enabled)
             num_phases = segmentation_params.get('num_phases', 3)
@@ -705,19 +521,20 @@ class PhaseAnalyzer:
         return results
 
 # Convenience functions for easy integration
-def analyze_phases(image: np.ndarray, **kwargs) -> Dict[str, Any]:
+def analyze_phases(image: np.ndarray, material_mask: np.ndarray, **kwargs) -> Dict[str, Any]:
     """
     Convenience function for running phase analysis.
     
     Args:
         image: Input grayscale image [0,1]
+        material_mask: Binary mask defining the material region to analyze
         **kwargs: Analysis parameters organized by category
         
     Returns:
         Analysis results dictionary
     """
     analyzer = PhaseAnalyzer()
-    return analyzer.run_full_analysis(image, **kwargs)
+    return analyzer.run_full_analysis(image, material_mask, **kwargs)
 
 def get_default_phase_analysis_parameters() -> Dict[str, Dict[str, Any]]:
     """
@@ -734,11 +551,6 @@ def get_default_phase_analysis_parameters() -> Dict[str, Dict[str, Any]]:
             'apply_denoising': False,
             'denoise_method': 'gaussian',
             'denoise_params': {'gaussian_sigma': 1.0}
-        },
-        'masking': {
-            'strategy': 'fill_holes',
-            'background_threshold': 0.08,
-            'cleanup_area': 500
         },
         'phase_detection': {
             'auto_detect_phases': True,

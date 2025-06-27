@@ -15,11 +15,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 # Import our modules
 try:
-    from src.preprocessing import correct_illumination, denoise_image
+    from src.preprocessing import correct_illumination, denoise_image, create_material_mask
     from src.phase_analysis import PhaseAnalyzer, create_visualization_plots as create_phase_plots
     from src.line_analysis import LineAnalyzer, create_visualization_plots as create_line_plots
     from src.artifact_removal import ArtifactRemover, create_visualization_plots as create_artifact_plots
-    from src.utils import create_material_mask
 except ImportError as e:
     st.error(f"Import error: {e}")
     st.stop()
@@ -51,6 +50,8 @@ def initialize_session_state():
         st.session_state.pipeline_loaded = False
     if 'uploaded_pipeline_name' not in st.session_state:
         st.session_state.uploaded_pipeline_name = None
+    if 'file_uploader_key' not in st.session_state:
+        st.session_state.file_uploader_key = 0
 
 def load_and_normalize_image(uploaded_file):
     """Load and normalize an image to [0,1] float32."""
@@ -587,9 +588,7 @@ def execute_preprocessing(image: np.ndarray, params: Dict[str, Any]) -> Tuple[np
     
     # Step 3: Material Masking
     if params.get('apply_masking', False):
-        from src.phase_analysis import PhaseAnalyzer
-        analyzer = PhaseAnalyzer()
-        material_mask, _ = analyzer.create_material_mask(
+        material_mask, _ = create_material_mask(
             processed_image,
             params['masking_strategy'],
             params['background_threshold'],
@@ -724,7 +723,7 @@ def execute_phase_analysis(image: np.ndarray, material_mask: np.ndarray, params:
     }
     
     # Call phase analysis with material mask (default or provided)
-    results = analyzer.run_phase_analysis_with_mask(image, material_mask, **analysis_params)
+    results = analyzer.run_full_analysis(image, material_mask, **analysis_params)
     return results
 
 def execute_line_analysis(image: np.ndarray, material_mask: np.ndarray, 
@@ -1107,11 +1106,12 @@ def main():
     st.header("🔧 Pipeline Steps")
     
     # Pipeline load/save section at the top
-    col1, col2, col3 = st.columns([2, 1, 1])
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
     
     with col1:
         uploaded_pipeline = st.file_uploader("📂 Load Pipeline", type=['json'], 
-                                           help="Upload a previously saved pipeline configuration")
+                                           help="Upload a previously saved pipeline configuration",
+                                           key=f"pipeline_uploader_{st.session_state.file_uploader_key}")
         if uploaded_pipeline is not None:
             # Check if this is a new upload or the same file being reprocessed
             if st.session_state.uploaded_pipeline_name != uploaded_pipeline.name:
@@ -1121,6 +1121,11 @@ def main():
             # Only load if we haven't processed this file yet
             if not st.session_state.pipeline_loaded:
                 load_pipeline(uploaded_pipeline)
+        else:
+            # Reset when no file is uploaded
+            if st.session_state.uploaded_pipeline_name is not None:
+                st.session_state.uploaded_pipeline_name = None
+                st.session_state.pipeline_loaded = False
     
     with col2:
         if st.session_state.pipeline_steps:
@@ -1136,12 +1141,26 @@ def main():
                         help="Remove all pipeline steps"):
                 st.session_state.pipeline_steps = []
                 st.session_state.pipeline_results = []
+                # Only reset upload state when explicitly clearing all
                 st.session_state.pipeline_loaded = False
                 st.session_state.uploaded_pipeline_name = None
+                st.session_state.file_uploader_key += 1  # Reset file uploader
                 st.rerun()
         else:
             st.button("🗑️ Clear All", use_container_width=True, disabled=True,
                      help="No steps to clear")
+    
+    with col4:
+        if st.session_state.uploaded_pipeline_name is not None:
+            if st.button("📤 Clear Upload", use_container_width=True,
+                        help="Clear uploaded pipeline file to enable adding new steps"):
+                st.session_state.uploaded_pipeline_name = None
+                st.session_state.pipeline_loaded = False
+                st.session_state.file_uploader_key += 1  # Reset file uploader
+                st.rerun()
+        else:
+            st.button("📤 Clear Upload", use_container_width=True, disabled=True,
+                     help="No uploaded pipeline to clear")
     
     st.divider()
     
@@ -1171,10 +1190,11 @@ def main():
             with col:
                 if st.button(f"❌ Step {i+1}", key=f"remove_{i}", help=f"Remove {operation_options[step['operation']]}"):
                     st.session_state.pipeline_steps.pop(i)
-                    # Reset pipeline loading state when manually modifying steps
+                    # Only reset upload state if no steps remain
                     if len(st.session_state.pipeline_steps) == 0:
                         st.session_state.pipeline_loaded = False
                         st.session_state.uploaded_pipeline_name = None
+                        st.session_state.file_uploader_key += 1  # Reset file uploader
                     st.rerun()
     else:
         st.info("No pipeline steps added yet. Use the controls below to add steps.")
@@ -1202,6 +1222,16 @@ def main():
     
     # Add step section - moved after configuration and before execute 
     st.header("➕ Add New Step")
+    
+    # Show helpful message if pipeline was uploaded
+    if st.session_state.uploaded_pipeline_name is not None:
+        if len(st.session_state.pipeline_steps) > 0:
+            st.info(f"📋 Pipeline loaded from '{st.session_state.uploaded_pipeline_name}' with {len(st.session_state.pipeline_steps)} step(s). You can add more steps below.")
+        else:
+            st.info(f"📋 Pipeline file '{st.session_state.uploaded_pipeline_name}' was loaded but contained no steps. Add steps below.")
+    elif len(st.session_state.pipeline_steps) > 0:
+        st.info(f"🔧 Current pipeline has {len(st.session_state.pipeline_steps)} step(s). Add more steps below.")
+    
     col1, col2 = st.columns([2, 1])
     
     with col1:
@@ -1226,9 +1256,7 @@ def main():
                 'operation': new_operation,
                 'params': {}
             })
-            # Reset pipeline loading state when manually adding steps
-            st.session_state.pipeline_loaded = False
-            st.session_state.uploaded_pipeline_name = None
+            # Don't reset the upload state - just mark that we've modified the pipeline
             st.rerun()
     
     # Configure pipeline steps (only if there are steps)

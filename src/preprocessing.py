@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from typing import Union, Optional
+from typing import Union, Optional, Tuple
 
 from .utils import make_odd
 
@@ -91,3 +91,88 @@ def denoise_image(image: np.ndarray, method: Optional[str],
         img_denoised = cv2.fastNlMeansDenoising(img_denoised, None, nlm_h, template_win, search_win)
         
     return img_denoised
+
+def _get_threshold_value(image: np.ndarray, 
+                        method_or_value: Union[str, float]) -> float:
+    """
+    Helper to get threshold value from method name or direct value.
+    
+    Args:
+        image: Input image region
+        method_or_value: Threshold method name or direct float value
+        
+    Returns:
+        Threshold value
+    """
+    from skimage import filters
+    
+    if image.size == 0:
+        return 0.5
+    
+    if isinstance(method_or_value, str):
+        method_name = method_or_value.lower()
+        try:
+            if method_name == 'multiotsu':
+                return filters.threshold_otsu(image)
+            
+            thresh_func = getattr(filters, f'threshold_{method_name}')
+            return thresh_func(image)
+        except (AttributeError, ValueError) as e:
+            # Fallback to Otsu
+            min_val, max_val = np.min(image), np.max(image)
+            if np.isclose(min_val, max_val):
+                return (min_val + max_val) / 2.0
+            return filters.threshold_otsu(image)
+    else:
+        return float(method_or_value)
+
+def create_material_mask(image: np.ndarray,
+                        strategy: str = "fill_holes",
+                        background_threshold: Union[str, float] = 0.08,
+                        cleanup_area: int = 500) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Creates material and background masks using different strategies.
+    
+    Args:
+        image: Input image (typically preprocessed)
+        strategy: Masking strategy ("fill_holes" or "bright_phases")
+        background_threshold: Threshold for background identification
+        cleanup_area: Area threshold for mask cleaning
+        
+    Returns:
+        Tuple of (material_mask, background_mask)
+    """
+    from skimage.morphology import binary_fill_holes, remove_small_objects, remove_small_holes
+    
+    if strategy == "fill_holes":
+        # Identify background pixels (very dark)
+        thresh_bg = _get_threshold_value(image, background_threshold)
+        background_only_mask = image < thresh_bg
+        
+        # Invert to get everything else (material + internal holes)
+        initial_mask = ~background_only_mask
+        
+        # Fill internal holes
+        filled_mask = binary_fill_holes(initial_mask)
+        
+        # Optional cleanup of external objects
+        if cleanup_area > 0 and filled_mask.any():
+            final_material_mask = remove_small_objects(filled_mask, min_size=cleanup_area, connectivity=1)
+        else:
+            final_material_mask = filled_mask
+            
+    elif strategy == "bright_phases":
+        # Original method: threshold for brighter phases
+        thresh_bright = _get_threshold_value(image, background_threshold)
+        final_material_mask = image > thresh_bright
+        
+        if cleanup_area > 0:
+            final_material_mask = remove_small_objects(final_material_mask, min_size=cleanup_area, connectivity=1)
+            final_material_mask = remove_small_holes(final_material_mask, area_threshold=cleanup_area, connectivity=1)
+    
+    else:
+        raise ValueError(f"Unknown masking strategy: {strategy}")
+    
+    background_mask = ~final_material_mask
+    
+    return final_material_mask, background_mask

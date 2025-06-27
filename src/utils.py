@@ -85,28 +85,3 @@ def show_image_steps(step_images, step_titles, figsize=(18, 10)):
 
     plt.tight_layout()
     plt.show()
-
-
-def create_material_mask(image, method, cleanup_area):
-    """Creates and cleans a binary mask separating material from background."""
-    print(f"Generating mask using '{method}' threshold...")
-    if isinstance(method, str):
-        try:
-            thresh_func = getattr(filters, f'threshold_{method}')
-            thresh_val = thresh_func(image)
-        except (AttributeError, ValueError) as e:
-            print(f"Warning: Threshold method '{method}' failed or not found ({e}). Falling back to Otsu.")
-            thresh_val = filters.threshold_otsu(image)
-    else:
-        thresh_val = float(method) # Use manual threshold
-
-    material_mask = image > thresh_val # Assuming material is brighter
-    print(f"Threshold value for mask: {thresh_val:.4f}")
-
-    if cleanup_area > 0:
-        print(f"Cleaning mask (removing objects/holes < {cleanup_area} area)...")
-        material_mask = remove_small_objects(material_mask, min_size=cleanup_area)
-        material_mask = remove_small_holes(material_mask, area_threshold=cleanup_area)
-
-    background_mask = ~material_mask
-    return material_mask, background_mask, thresh_val
