@@ -145,7 +145,7 @@ def create_preprocessing_params_ui(step_id: str, existing_params: Optional[Dict[
                                       key=f"denoise_{step_id}", 
                                       value=defaults.get('apply_denoising', True))
             
-            denoise_methods = ["median", "gaussian", "bilateral", "nlm"]
+            denoise_methods = ["gaussian", "median", "bilateral", "nlm"]
             default_method = defaults.get('denoise_method', 'median')
             method_index = denoise_methods.index(default_method) if default_method in denoise_methods else 0
             

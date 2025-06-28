@@ -1,40 +1,28 @@
 # Functional Materials Image Analysis
 
-A comprehensive Streamlit-based application for analyzing microscopy images of functional materials. This tool provides advanced image processing capabilities including phase analysis, line detection, and artifact removal specifically designed for materials science applications.
+Streamlit-based microscopy image analysis tool for materials science with custom pipeline builder.
 
-## Features
+## 🚀 Features
 
-### 🔬 **Phase Analysis**
-- Automatic phase detection using histogram analysis
-- Multiple segmentation methods (K-means, Gaussian Mixture, Manual thresholding)
-- Artifact removal with various detection and inpainting methods
-- Comprehensive statistical analysis and visualization
+- **Phase Analysis**: Automatic detection, K-means/manual segmentation, statistical analysis
+- **Line Analysis**: Frangi filter, Hough transform, orientation analysis  
+- **Artifact Removal**: Multiple detection methods, advanced inpainting (Telea, Navier-Stokes, LaMa)
+- **Preprocessing**: Illumination correction, denoising, material masking
+- **Pipeline Builder**: Interactive workflow design, save/load configurations, batch processing
 
-### 📏 **Line Analysis**
-- Frangi filter for line enhancement
-- Hough transform for line detection
-- Sobel edge analysis with orientation histograms
-- Skeletonization and boundary exclusion
-- Material mask integration
+## 💻 Setup
 
-### 🎯 **Artifact Removal**
-- Multiple detection methods (percentile, absolute threshold, Otsu)
-- Advanced inpainting techniques (Telea, Navier-Stokes, LaMa)
-- Morphological filtering and component analysis
-- Before/after comparison visualizations
-
-### 🔧 **Preprocessing**
-- Illumination correction (blur subtract/divide)
-- Multiple denoising methods (median, Gaussian, bilateral, NLM)
-- Image normalization and enhancement
-- Processing history tracking
-
-## Installation
+### Quick Start
 
 1. **Create a virtual environment:**
 ```bash
+# Windows
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+venv\Scripts\activate
+
+# macOS/Linux
+python3 -m venv venv
+source venv/bin/activate
 ```
 
 2. **Install dependencies:**
@@ -42,7 +30,12 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## Usage
+### Verify Installation
+```bash
+python -c "import streamlit; import cv2; import numpy; print('Installation successful!')"
+```
+
+## 🎯 Usage
 
 ### Running the Application
 
@@ -50,65 +43,90 @@ pip install -r requirements.txt
 streamlit run main.py
 ```
 
-The application will open in your default web browser at `http://localhost:8501`.
+The application will open at `http://localhost:8501`.
 
 ### Basic Workflow
 
-1. **Upload Image**: Upload microscopy images (PNG, JPG, TIFF formats supported)
-2. **Preprocessing**: Apply illumination correction and denoising if needed
-3. **Analysis**: Choose from phase analysis, line analysis, or artifact removal
-4. **Results**: View comprehensive visualizations and download processed images
-5. **History**: Track and compare different processing steps
+1. **Upload Image**: Drag and drop microscopy images (PNG, JPG, TIFF)
+2. **Build Pipeline**: Add processing steps (preprocessing, phase analysis, line analysis, artifact removal)
+3. **Configure Parameters**: Adjust settings for each step
+4. **Execute Pipeline**: Run the complete workflow
+5. **Review Results**: Examine outputs, statistics, and visualizations
+6. **Export**: Download processed images and analysis reports
 
+### Analysis Modules Deep Dive
 
-## Key Dependencies
+#### PhaseAnalyzer (`src/phase_analysis.py`)
+**Purpose**: Comprehensive phase segmentation and analysis for multi-phase materials
 
-- **Streamlit**: Web application framework
-- **OpenCV**: Computer vision and image processing
-- **scikit-image**: Image processing algorithms
-- **NumPy**: Numerical computing
-- **Matplotlib**: Plotting and visualization
-- **PIL/Pillow**: Image I/O operations
+**Key Methods**:
+- `detect_number_of_phases()`: Automatic phase detection using histogram peak analysis
+- `perform_phase_segmentation()`: K-means, Gaussian mixture, or manual thresholding
+- `calculate_phase_statistics()`: Area fractions, distributions, and morphological metrics
+- `run_full_analysis()`: Complete pipeline with preprocessing and visualization
 
-### Optional Dependencies
+**Algorithms**:
+- Histogram-based peak detection with prominence filtering
+- K-means clustering with optimized initialization
+- Gaussian mixture models for overlapping phase separation
+- Morphological post-processing for mask refinement
 
-- **simple-lama-inpainting**: Advanced deep learning inpainting (for artifact removal)
+#### LineAnalyzer (`src/line_analysis.py`)
+**Purpose**: Detection and analysis of linear features and orientations
 
-## Analysis Modules
+**Key Methods**:
+- `apply_frangi_filter()`: Multi-scale ridge enhancement for line detection
+- `detect_hough_lines()`: Geometric line detection with parameter optimization
+- `calculate_sobel_orientation()`: Edge-based orientation analysis
+- `analyze_orientations()`: Statistical analysis of directional features
 
-### PhaseAnalyzer
-Provides comprehensive phase analysis capabilities:
-- Automatic phase detection using histogram peak finding
-- Multiple segmentation algorithms
-- Statistical analysis of phase distributions
-- Artifact removal and cleaning
+**Algorithms**:
+- Frangi vesselness filter for scale-adaptive line enhancement
+- Probabilistic Hough transform for robust line detection
+- Sobel gradient analysis with magnitude weighting
+- Circular statistics for orientation distribution analysis
 
-### LineAnalyzer
-Specialized for detecting and analyzing linear features:
-- Frangi filter for line enhancement
-- Hough transform for geometric line detection
-- Sobel edge analysis for orientation patterns
-- Boundary exclusion and skeletonization
+#### ArtifactRemover (`src/artifact_removal.py`)
+**Purpose**: Detection and removal of imaging artifacts and noise
 
-### ArtifactRemover
-Focuses on cleaning microscopy artifacts:
-- Multiple detection methods for bright/dark spots
-- Advanced inpainting using various algorithms
-- Morphological filtering and size-based selection
-- Statistical reporting of removed artifacts
+**Key Methods**:
+- `create_artifact_mask()`: Multi-method artifact detection
+- `clean_mask()`: Morphological filtering and size-based selection
+- `inpaint_artifacts()`: Multiple inpainting algorithms
+- `run_full_analysis()`: Complete artifact removal pipeline
 
-## Output
+**Algorithms**:
+- Percentile-based and Otsu threshold detection
+- Morphological opening and component analysis
+- Telea and Navier-Stokes inpainting
+- Optional LaMa deep learning inpainting
 
-The application automatically creates timestamped output directories containing:
-- Processed images at each step
-- Analysis results in JSON format
-- Visualization plots
-- Processing history logs
+#### Preprocessing (`src/preprocessing.py`)
+**Purpose**: Image enhancement and preparation for analysis
 
-## Tips for Best Results
+**Key Functions**:
+- `correct_illumination()`: Blur-based illumination correction methods
+- `denoise_image()`: Multiple denoising algorithms
+- `create_material_mask()`: Automatic foreground/background separation
 
-1. **Image Quality**: Use high-quality, well-illuminated microscopy images
-2. **Preprocessing**: Apply illumination correction for uneven lighting
-3. **Parameter Tuning**: Adjust analysis parameters based on your specific material
-4. **Material Masks**: Use phase analysis results to create material masks for line analysis
-5. **Processing Chain**: Follow preprocessing → phase analysis → line analysis workflow
+**Algorithms**:
+- Gaussian blur background estimation and correction
+- Median, bilateral, and Non-Local Means denoising
+- Otsu thresholding and morphological mask refinement
+
+### Parameter Optimization
+
+#### Phase Analysis
+- **Automatic Detection**: Enable auto-detection for unknown phase numbers
+- **K-means vs Manual**: Use K-means for clear phase separation, manual thresholds for fine control
+- **Material Masking**: Choose "fill_holes" for porous materials, "bright_phases" for high-contrast samples
+
+#### Line Analysis
+- **Frangi Parameters**: Adjust sigma range based on expected line thickness
+- **Hough Sensitivity**: Lower thresholds for weak lines, higher for noise reduction
+- **Boundary Exclusion**: Use larger erosion sizes for high-noise edge regions
+
+#### Artifact Removal
+- **Detection Method**: Percentile-based for consistent results, Otsu for automatic adaptation
+- **Inpainting Choice**: Telea for speed, Navier-Stokes for quality, LaMa for best results
+- **Size Filtering**: Set appropriate min/max areas based on typical artifact sizes
