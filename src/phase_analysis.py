@@ -2,13 +2,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
-from skimage import filters, morphology, img_as_float
-from skimage.morphology import disk, remove_small_objects, remove_small_holes, binary_erosion
+from skimage import filters
 from scipy.signal import find_peaks
-from scipy.ndimage import binary_fill_holes
 from sklearn.cluster import KMeans
 from typing import Dict, List, Tuple, Optional, Any, Union
-import os
 
 from .utils import load_and_prepare_image
 from .preprocessing import correct_illumination, denoise_image, create_material_mask

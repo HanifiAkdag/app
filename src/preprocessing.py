@@ -142,8 +142,9 @@ def create_material_mask(image: np.ndarray,
     Returns:
         Tuple of (material_mask, background_mask)
     """
-    from skimage.morphology import binary_fill_holes, remove_small_objects, remove_small_holes
-    
+    from skimage.morphology import remove_small_objects, remove_small_holes
+    from scipy.ndimage import binary_fill_holes
+
     if strategy == "fill_holes":
         # Identify background pixels (very dark)
         thresh_bg = _get_threshold_value(image, background_threshold)
