@@ -53,14 +53,44 @@ def initialize_session_state():
     if 'file_uploader_key' not in st.session_state:
         st.session_state.file_uploader_key = 0
 
-def load_and_normalize_image(uploaded_file):
-    """Load and normalize an image to [0,1] float32."""
+def load_and_normalize_image(uploaded_file, crop_info_bar_enabled=True):
+    """Load and normalize an image to [0,1] float32, crop info bar if present, and handle TIFFs robustly."""
+    from PIL import Image, TiffImagePlugin
+    import io
+    import numpy as np
+    import cv2
+
+    def crop_info_bar(image_array):
+        """
+        Detect 3 consecutive horizontal lines that are identical (likely the info bar),
+        starting from the middle of the image, and crop them and everything below.
+        """
+        if image_array.ndim != 2:
+            return image_array  # Only process grayscale
+        
+        h, w = image_array.shape
+        start_row = h // 2
+        
+        # Look for 3 consecutive rows that are identical
+        for row in range(start_row, h - 2):
+            # Check if the 3 consecutive rows are identical
+            if (np.array_equal(image_array[row], image_array[row+1]) and
+                np.array_equal(image_array[row+1], image_array[row+2])):
+                # Found the info bar - crop at this row
+                return image_array[:row, :]
+        
+        # If no info bar found, return original image
+        return image_array
+
     try:
         file_bytes = uploaded_file.read()
-        
-        # Try PIL first
+        file_name = getattr(uploaded_file, 'name', None)
+        # Try PIL first (handles TIFFs and most formats)
         try:
             pil_image = Image.open(io.BytesIO(file_bytes))
+            # For multi-page TIFF, use first page
+            if hasattr(pil_image, 'n_frames') and pil_image.n_frames > 1:
+                pil_image.seek(0)
             if pil_image.mode in ['RGBA', 'RGB', 'P']:
                 pil_image = pil_image.convert('L')
             image_array = np.array(pil_image)
@@ -68,10 +98,14 @@ def load_and_normalize_image(uploaded_file):
             # Fallback to OpenCV
             nparr = np.frombuffer(file_bytes, np.uint8)
             image_array = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
-            
         if image_array is None:
             return None
-            
+        # If image is color, convert to grayscale
+        if image_array.ndim == 3:
+            image_array = cv2.cvtColor(image_array, cv2.COLOR_BGR2GRAY)
+        # Crop info bar if present and enabled (only for images with height > 100)
+        if crop_info_bar_enabled and image_array.shape[0] > 100:
+            image_array = crop_info_bar(image_array)
         # Normalize to [0,1]
         if image_array.dtype == np.uint8:
             return image_array.astype(np.float32) / 255.0
@@ -84,7 +118,6 @@ def load_and_normalize_image(uploaded_file):
                 return (image_array - img_min) / (img_max - img_min)
             else:
                 return image_array.astype(np.float32)
-                
     except Exception as e:
         st.error(f"Error loading image: {e}")
         return None
@@ -146,7 +179,7 @@ def create_preprocessing_params_ui(step_id: str, existing_params: Optional[Dict[
                                       value=defaults.get('apply_denoising', True))
             
             denoise_methods = ["gaussian", "median", "bilateral", "nlm"]
-            default_method = defaults.get('denoise_method', 'median')
+            default_method = defaults.get('denoise_method', 'gaussian')
             method_index = denoise_methods.index(default_method) if default_method in denoise_methods else 0
             
             denoise_method = st.selectbox("Method", denoise_methods,
@@ -195,10 +228,11 @@ def create_preprocessing_params_ui(step_id: str, existing_params: Optional[Dict[
         with col3:
             st.subheader("Material Masking")
             st.info("🎭 Creates material mask to separate sample from background.")
+            st.info("💡 Use only when image contains a background.")
             
             apply_masking = st.checkbox("Create Material Mask", 
                                       key=f"masking_{step_id}", 
-                                      value=defaults.get('apply_masking', True))
+                                      value=defaults.get('apply_masking', False))
             
             masking_strategies = ["fill_holes", "bright_phases"]
             default_strategy = defaults.get('masking_strategy', 'fill_holes')
@@ -1120,8 +1154,15 @@ def main():
             type=['png', 'jpg', 'jpeg', 'tiff', 'tif']
         )
         
+        # Option to enable/disable info bar cropping
+        crop_info_bar = st.checkbox(
+            "Auto-crop info bar at bottom",
+            value=True,
+            help="Automatically detect and remove info bars (like scale bars or metadata) at the bottom of SEM/microscopy images"
+        )
+        
         if uploaded_file is not None:
-            image = load_and_normalize_image(uploaded_file)
+            image = load_and_normalize_image(uploaded_file, crop_info_bar_enabled=crop_info_bar)
             if image is not None:
                 st.session_state.original_image = image
                 st.session_state.current_image = image
