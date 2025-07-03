@@ -52,6 +52,15 @@ def initialize_session_state():
         st.session_state.uploaded_pipeline_name = None
     if 'file_uploader_key' not in st.session_state:
         st.session_state.file_uploader_key = 0
+    # Bulk processing session state
+    if 'bulk_images' not in st.session_state:
+        st.session_state.bulk_images = []
+    if 'bulk_mode' not in st.session_state:
+        st.session_state.bulk_mode = False
+    if 'bulk_processing_complete' not in st.session_state:
+        st.session_state.bulk_processing_complete = False
+    if 'bulk_results' not in st.session_state:
+        st.session_state.bulk_results = []
 
 def load_and_normalize_image(uploaded_file, crop_info_bar_enabled=True):
     """Load and normalize an image to [0,1] float32, crop info bar if present, and handle TIFFs robustly."""
@@ -127,6 +136,13 @@ def create_output_directory(image_filename: str) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = os.path.splitext(image_filename)[0] if image_filename else "pipeline"
     output_dir = os.path.join("outputs", f"{timestamp}_{base_name}")
+    os.makedirs(output_dir, exist_ok=True)
+    return output_dir
+
+def create_bulk_output_directory() -> str:
+    """Create output directory for bulk processing results."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join("outputs", f"bulk_processing_{timestamp}")
     os.makedirs(output_dir, exist_ok=True)
     return output_dir
 
@@ -739,7 +755,6 @@ def execute_phase_analysis(image: np.ndarray, material_mask: np.ndarray, params:
     
     # Create a default material mask if none is provided
     if material_mask is None:
-        st.warning("⚠️ No material mask found. Creating default mask using entire image area.")
         # Create a mask that covers the entire image (all pixels are considered material)
         material_mask = np.ones(image.shape, dtype=bool)
     
@@ -767,7 +782,6 @@ def execute_line_analysis(image: np.ndarray, material_mask: np.ndarray,
     
     # Create a default material mask if none is provided
     if material_mask is None:
-        st.warning("⚠️ No material mask found. Creating default mask using entire image area.")
         # Create a mask that covers the entire image (all pixels are considered material)
         material_mask = np.ones(image.shape, dtype=bool)
     
@@ -1137,6 +1151,144 @@ def display_pipeline_results():
                 else:
                     st.error(f"❌ Analysis failed: {result.get('error_message', 'Unknown error')}")
 
+def display_bulk_results():
+    """Display results from bulk pipeline execution."""
+    if not st.session_state.bulk_results:
+        return
+    
+    st.header("📊 Bulk Processing Results")
+    
+    # Summary metrics
+    total_images = len(st.session_state.bulk_results)
+    successful = sum(1 for r in st.session_state.bulk_results if r['success'])
+    failed = total_images - successful
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Images", total_images)
+    with col2:
+        st.metric("Successful", successful, delta=f"{successful/total_images:.1%}")
+    with col3:
+        st.metric("Failed", failed, delta=f"-{failed/total_images:.1%}" if failed > 0 else "0%")
+    with col4:
+        st.metric("Success Rate", f"{successful/total_images:.1%}")
+    
+    # Detailed results
+    st.subheader("📋 Detailed Results")
+    
+    # Create tabs for successful and failed results
+    if successful > 0 and failed > 0:
+        tab1, tab2 = st.tabs([f"✅ Successful ({successful})", f"❌ Failed ({failed})"])
+    elif successful > 0:
+        tab1 = st.tabs([f"✅ Successful ({successful})"])[0]
+        tab2 = None
+    else:
+        tab1 = None 
+        tab2 = st.tabs([f"❌ Failed ({failed})"])[0]
+    
+    # Successful results
+    if tab1 is not None:
+        with tab1:
+            successful_results = [r for r in st.session_state.bulk_results if r['success']]
+            
+            for i, result in enumerate(successful_results):
+                with st.expander(f"📁 {result['filename']}", expanded=False):
+                    col1, col2 = st.columns([2, 1])
+                    
+                    with col1:
+                        st.write(f"**Output Directory:** `{result['output_dir']}`")
+                        
+                        # List generated files
+                        if os.path.exists(result['output_dir']):
+                            files = os.listdir(result['output_dir'])
+                            if files:
+                                st.write("**Generated Files:**")
+                                for file in sorted(files):
+                                    file_path = os.path.join(result['output_dir'], file)
+                                    if os.path.isfile(file_path):
+                                        file_size = os.path.getsize(file_path)
+                                        st.write(f"- {file} ({file_size:,} bytes)")
+                            else:
+                                st.write("No output files found")
+                        else:
+                            st.write("Output directory not found")
+                    
+                    with col2:
+                        # Show processing statistics
+                        st.write("**Processing Summary:**")
+                        st.metric("Pipeline Steps", len(st.session_state.pipeline_steps))
+                        
+                        # Count result types
+                        if 'results' in result:
+                            processing_results = 0
+                            analysis_results = 0
+                            
+                            for step_result, step_info in zip(result['results'], st.session_state.pipeline_steps):
+                                if step_info['operation'] in ['preprocessing', 'artifact_removal']:
+                                    processing_results += 1
+                                elif step_info['operation'] in ['phase_analysis', 'line_analysis']:
+                                    analysis_results += 1
+                            
+                            st.metric("Processing Steps", processing_results)
+                            st.metric("Analysis Steps", analysis_results)
+    
+    # Failed results
+    if tab2 is not None:
+        with tab2:
+            failed_results = [r for r in st.session_state.bulk_results if not r['success']]
+            
+            for i, result in enumerate(failed_results):
+                with st.expander(f"❌ {result['filename']}", expanded=False):
+                    st.error(f"**Error:** {result.get('error', 'Unknown error')}")
+                    st.write(f"**Output Directory:** `{result.get('output_dir', 'N/A')}`")
+    
+    # Download results section
+    st.subheader("💾 Download Results")
+    
+    if successful > 0:
+        # Option to create a zip file of all results
+        if st.button("📦 Create ZIP Archive of All Results"):
+            try:
+                import zipfile
+                import tempfile
+                
+                # Create temporary zip file
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
+                    zip_path = tmp_file.name
+                
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for result in st.session_state.bulk_results:
+                        if result['success'] and os.path.exists(result['output_dir']):
+                            # Add all files from this result's output directory
+                            for root, dirs, files in os.walk(result['output_dir']):
+                                for file in files:
+                                    file_path = os.path.join(root, file)
+                                    # Create archive path with image name as folder
+                                    base_name = os.path.splitext(result['filename'])[0]
+                                    rel_path = os.path.relpath(file_path, result['output_dir'])
+                                    archive_path = os.path.join(base_name, rel_path)
+                                    zipf.write(file_path, archive_path)
+                
+                # Provide download link
+                with open(zip_path, 'rb') as f:
+                    zip_data = f.read()
+                
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                st.download_button(
+                    label="📥 Download Results Archive",
+                    data=zip_data,
+                    file_name=f"bulk_processing_results_{timestamp}.zip",
+                    mime="application/zip"
+                )
+                
+                # Clean up temporary file
+                os.unlink(zip_path)
+                
+            except Exception as e:
+                st.error(f"❌ Error creating ZIP archive: {str(e)}")
+    else:
+        st.info("No successful results to download")
+
 def main():
     """Main Streamlit application."""
     initialize_session_state()
@@ -1144,48 +1296,190 @@ def main():
     st.title("🔬 Custom Pipeline Builder")
     st.markdown("*Build custom analysis workflows by chaining operations*")
     
-    # Image upload section
-    st.header("📤 Image Upload")
-    col1, col2 = st.columns([2, 1])
+    # Mode selection
+    st.header("📤 Upload Mode")
+    upload_mode = st.radio(
+        "Choose upload mode:",
+        ["Single Image", "Bulk Processing"],
+        key="upload_mode",
+        horizontal=True
+    )
     
-    with col1:
-        uploaded_file = st.file_uploader(
-            "Choose an image file",
-            type=['png', 'jpg', 'jpeg', 'tiff', 'tif']
-        )
+    if upload_mode == "Single Image":
+        st.session_state.bulk_mode = False
+        # Single image upload section
+        st.subheader("Single Image Upload")
+        col1, col2 = st.columns([2, 1])
         
-        # Option to enable/disable info bar cropping
-        crop_info_bar = st.checkbox(
-            "Auto-crop info bar at bottom",
-            value=True,
-            help="Automatically detect and remove info bars (like scale bars or metadata) at the bottom of SEM/microscopy images"
-        )
-        
-        if uploaded_file is not None:
-            image = load_and_normalize_image(uploaded_file, crop_info_bar_enabled=crop_info_bar)
-            if image is not None:
-                st.session_state.original_image = image
-                st.session_state.current_image = image
-                st.session_state.output_dir = create_output_directory(uploaded_file.name)
-                st.success("✅ Image loaded successfully")
-                
-                # Display the uploaded image
-                st.image(st.session_state.original_image, caption="Uploaded Image", use_container_width=True)
+        with col1:
+            uploaded_file = st.file_uploader(
+                "Choose an image file",
+                type=['png', 'jpg', 'jpeg', 'tiff', 'tif']
+            )
+            
+            # Option to enable/disable info bar cropping
+            crop_info_bar = st.checkbox(
+                "Auto-crop info bar at bottom",
+                value=True,
+                help="Automatically detect and remove info bars (like scale bars or metadata) at the bottom of SEM/microscopy images"
+            )
+            
+            if uploaded_file is not None:
+                image = load_and_normalize_image(uploaded_file, crop_info_bar_enabled=crop_info_bar)
+                if image is not None:
+                    st.session_state.original_image = image
+                    st.session_state.current_image = image
+                    st.session_state.output_dir = create_output_directory(uploaded_file.name)
+                    st.success("✅ Image loaded successfully")
+                    
+                    # Display the uploaded image
+                    st.image(st.session_state.original_image, caption="Uploaded Image", use_container_width=True)
+                else:
+                    st.error("❌ Failed to load image")
+                    return
             else:
-                st.error("❌ Failed to load image")
+                st.warning("⚠️ Please upload an image to begin")
                 return
-        else:
-            st.warning("⚠️ Please upload an image to begin")
-            return
+        
+        with col2:
+            if st.session_state.original_image is not None:
+                st.write("**Image Statistics:**")
+                st.metric("Width", st.session_state.original_image.shape[1])
+                st.metric("Height", st.session_state.original_image.shape[0])
+                st.metric("Min Value", f"{st.session_state.original_image.min():.3f}")
+                st.metric("Max Value", f"{st.session_state.original_image.max():.3f}")
     
-    with col2:
-        if st.session_state.original_image is not None:
-            st.write("**Image Statistics:**")
-            st.metric("Width", st.session_state.original_image.shape[1])
-            st.metric("Height", st.session_state.original_image.shape[0])
-            st.metric("Min Value", f"{st.session_state.original_image.min():.3f}")
-            st.metric("Max Value", f"{st.session_state.original_image.max():.3f}")
-            st.metric("Mean", f"{st.session_state.original_image.mean():.3f}")
+    else:  # Bulk Processing mode
+        st.session_state.bulk_mode = True
+        st.subheader("Bulk Image Upload")
+        
+        uploaded_files = st.file_uploader(
+            "Choose multiple image files",
+            type=['png', 'jpg', 'jpeg', 'tiff', 'tif'],
+            accept_multiple_files=True,
+            key="bulk_uploader"
+        )
+        
+        # Option to enable/disable info bar cropping for bulk
+        crop_info_bar_bulk = st.checkbox(
+            "Auto-crop info bar at bottom (for all images)",
+            value=True,
+            help="Automatically detect and remove info bars (like scale bars or metadata) at the bottom of SEM/microscopy images",
+            key="bulk_crop_info_bar"
+        )
+        
+        if uploaded_files:
+            # Process uploaded files
+            if st.button("Load All Images", type="primary"):
+                with st.spinner("Loading images..."):
+                    st.session_state.bulk_images = []
+                    failed_images = []
+                    
+                    for uploaded_file in uploaded_files:
+                        image = load_and_normalize_image(uploaded_file, crop_info_bar_enabled=crop_info_bar_bulk)
+                        if image is not None:
+                            st.session_state.bulk_images.append((image, uploaded_file.name))
+                        else:
+                            failed_images.append(uploaded_file.name)
+                    
+                    if st.session_state.bulk_images:
+                        st.success(f"✅ {len(st.session_state.bulk_images)} images loaded successfully")
+                    if failed_images:
+                        st.warning(f"⚠️ Failed to load {len(failed_images)} images: {', '.join(failed_images)}")
+        
+        # Show loaded images summary
+        if st.session_state.bulk_images:
+            st.subheader("Loaded Images")
+            
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.write(f"**Total images:** {len(st.session_state.bulk_images)}")
+                
+                # Enhanced image list with view and remove functionality
+                with st.expander("📋 Manage image list", expanded=False):
+                    # Add selectbox to choose an image to view/manage
+                    image_options = [f"{i+1}. {filename}" for i, (_, filename) in enumerate(st.session_state.bulk_images)]
+                    
+                    if image_options:
+                        selected_option = st.selectbox(
+                            "Select an image to view or manage:",
+                            options=image_options,
+                            key="bulk_image_selector"
+                        )
+                        
+                        # Extract index from selection
+                        selected_index = int(selected_option.split('.')[0]) - 1
+                        selected_image, selected_filename = st.session_state.bulk_images[selected_index]
+                        
+                        # Create columns for actions
+                        action_col1, action_col2, action_col3 = st.columns(3)
+                        
+                        with action_col1:
+                            if st.button("�️ View Image", key=f"view_image_{selected_index}"):
+                                st.session_state.selected_bulk_image_for_view = selected_index
+                        
+                        with action_col2:
+                            if st.button("🗑️ Remove Image", key=f"remove_image_{selected_index}", type="secondary"):
+                                # Remove the selected image from the list
+                                st.session_state.bulk_images.pop(selected_index)
+                                # Clear any viewing state if we removed the currently viewed image
+                                if hasattr(st.session_state, 'selected_bulk_image_for_view'):
+                                    if st.session_state.selected_bulk_image_for_view == selected_index:
+                                        del st.session_state.selected_bulk_image_for_view
+                                    elif st.session_state.selected_bulk_image_for_view > selected_index:
+                                        st.session_state.selected_bulk_image_for_view -= 1
+                                st.success(f"✅ Removed {selected_filename}")
+                                st.rerun()
+                        
+                        with action_col3:
+                            st.write(f"**Size:** {selected_image.shape[1]}×{selected_image.shape[0]}")
+                        
+                        # Show selected image if requested
+                        if hasattr(st.session_state, 'selected_bulk_image_for_view'):
+                            if st.session_state.selected_bulk_image_for_view < len(st.session_state.bulk_images):
+                                view_image, view_filename = st.session_state.bulk_images[st.session_state.selected_bulk_image_for_view]
+                                st.subheader(f"🖼️ Viewing: {view_filename}")
+                                
+                                # Image statistics
+                                img_col1, img_col2 = st.columns([3, 1])
+                                with img_col1:
+                                    st.image(view_image, caption=view_filename, use_container_width=True)
+                                
+                                with img_col2:
+                                    st.write("**Statistics:**")
+                                    st.metric("Width", view_image.shape[1])
+                                    st.metric("Height", view_image.shape[0])
+                                    st.metric("Min Value", f"{view_image.min():.3f}")
+                                    st.metric("Max Value", f"{view_image.max():.3f}")
+                                    st.metric("Mean", f"{view_image.mean():.3f}")
+                                
+                                # Close view button
+                                if st.button("❌ Close View", key="close_image_view"):
+                                    del st.session_state.selected_bulk_image_for_view
+                                    st.rerun()
+                    else:
+                        st.info("No images in the list")
+            
+            with col2:
+                # Show first image as preview
+                if st.session_state.bulk_images:
+                    first_image, first_filename = st.session_state.bulk_images[0]
+                    st.image(first_image, caption=f"Preview: {first_filename}", use_container_width=True)
+            
+            # Clear bulk images button
+            if st.button("🗑️ Clear All Images"):
+                st.session_state.bulk_images = []
+                st.session_state.bulk_results = []
+                st.session_state.bulk_processing_complete = False
+                # Clear viewing state
+                if hasattr(st.session_state, 'selected_bulk_image_for_view'):
+                    del st.session_state.selected_bulk_image_for_view
+                st.rerun()
+        
+        # Return early if no images loaded in bulk mode
+        if not st.session_state.bulk_images:
+            st.warning("⚠️ Please upload and load images to begin")
+            return
     
     # Pipeline Steps Management
     st.header("🔧 Pipeline Steps")
@@ -1348,17 +1642,51 @@ def main():
     if st.session_state.pipeline_steps:
         st.header("🚀 Execute Pipeline")
         
-        col1, col2 = st.columns([1, 1])
+        if st.session_state.bulk_mode:
+            # Bulk processing mode
+            st.subheader("Bulk Processing")
+            
+            if st.session_state.bulk_images:
+                col1, col2 = st.columns([1, 1])
+                
+                with col1:
+                    if not st.session_state.bulk_processing_complete:
+                        if st.button("▶️ Run Bulk Pipeline", type="primary", use_container_width=True):
+                            execute_bulk_pipeline()
+                    else:
+                        st.success("✅ Bulk processing completed!")
+                        if st.button("🔄 Run Again", use_container_width=True):
+                            st.session_state.bulk_processing_complete = False
+                            st.session_state.bulk_results = []
+                            st.rerun()
+                
+                with col2:
+                    if st.session_state.bulk_processing_complete and st.session_state.bulk_results:
+                        successful = sum(1 for r in st.session_state.bulk_results if r['success'])
+                        total = len(st.session_state.bulk_results)
+                        st.metric("Success Rate", f"{successful}/{total}")
+                
+                # Display bulk results
+                if st.session_state.bulk_processing_complete and st.session_state.bulk_results:
+                    display_bulk_results()
+            else:
+                st.warning("⚠️ No images loaded for bulk processing")
         
-        with col1:
-            if st.button("▶️ Run Pipeline", type="primary", use_container_width=True):
-                execute_pipeline()
-        
-        with col2:
-            st.write("")  # Empty space for alignment
-        
-        # Display results
-        display_pipeline_results()
+        else:
+            # Single image processing mode
+            st.subheader("Single Image Processing")
+            
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                if st.button("▶️ Run Pipeline", type="primary", use_container_width=True):
+                    execute_pipeline()
+            
+            with col2:
+                st.write("")  # Empty space for alignment
+            
+            # Display results
+            display_pipeline_results()
 
 def execute_pipeline():
     """Execute the complete pipeline."""
@@ -1466,6 +1794,141 @@ def execute_pipeline():
                 break
     
     st.success("🎉 Pipeline execution completed!")
+
+def execute_bulk_pipeline():
+    """Execute the pipeline on multiple images."""
+    if not st.session_state.pipeline_steps:
+        st.error("No pipeline steps to execute")
+        return
+    
+    if not st.session_state.bulk_images:
+        st.error("No images uploaded for bulk processing")
+        return
+    
+    # Create bulk output directory
+    bulk_output_dir = create_bulk_output_directory()
+    st.session_state.bulk_results = []
+    
+    # Progress tracking
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    total_images = len(st.session_state.bulk_images)
+    
+    for img_idx, (image_data, filename) in enumerate(st.session_state.bulk_images):
+        status_text.text(f"Processing image {img_idx + 1}/{total_images}: {filename}")
+        progress_bar.progress((img_idx + 1) / total_images)
+        
+        # Create individual output directory for this image
+        base_name = os.path.splitext(filename)[0]
+        image_output_dir = os.path.join(bulk_output_dir, base_name)
+        os.makedirs(image_output_dir, exist_ok=True)
+        
+        try:
+            # Process this image through the pipeline
+            current_image = image_data.copy()
+            material_mask = None
+            image_results = []
+            
+            def prepare_for_json(obj):
+                """Recursively prepare object for JSON serialization."""
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                elif isinstance(obj, (np.integer, np.floating)):
+                    return obj.item()
+                elif isinstance(obj, dict):
+                    return {k: prepare_for_json(v) for k, v in obj.items()}
+                elif isinstance(obj, (list, tuple)):
+                    return [prepare_for_json(item) for item in obj]
+                elif isinstance(obj, (str, int, float, bool)) or obj is None:
+                    return obj
+                else:
+                    return str(obj)
+            
+            for i, step in enumerate(st.session_state.pipeline_steps):
+                operation = step['operation']
+                params = step['params']
+                
+                if operation == 'preprocessing':
+                    result, mask = execute_preprocessing(current_image, params)
+                    current_image = result
+                    
+                    if mask is not None:
+                        material_mask = mask
+                    
+                    image_results.append((result, mask))
+                    
+                    # Save intermediate result
+                    filename_step = f"step_{i+1}_preprocessing.png"
+                    save_image(result, filename_step, image_output_dir)
+                    
+                    if mask is not None:
+                        mask_filename = f"step_{i+1}_material_mask.png"
+                        save_image(mask.astype(np.uint8) * 255, mask_filename, image_output_dir)
+                
+                elif operation == 'artifact_removal':
+                    result, analysis_results = execute_artifact_removal(current_image, params)
+                    current_image = result
+                    image_results.append((result, analysis_results))
+                    
+                    filename_step = f"step_{i+1}_artifact_removal.png"
+                    save_image(result, filename_step, image_output_dir)
+                
+                elif operation == 'phase_analysis':
+                    result = execute_phase_analysis(current_image, material_mask, params)
+                    image_results.append(result)
+                    
+                    if result.get('success', False):
+                        results_file = f"step_{i+1}_phase_analysis_results.json"
+                        results_path = os.path.join(image_output_dir, results_file)
+                        
+                        results_to_save = prepare_for_json(result)
+                        
+                        with open(results_path, 'w') as f:
+                            json.dump(results_to_save, f, indent=2)
+                
+                elif operation == 'line_analysis':
+                    result = execute_line_analysis(current_image, material_mask, params)
+                    image_results.append(result)
+                    
+                    if result.get('success', False):
+                        results_file = f"step_{i+1}_line_analysis_results.json"
+                        results_path = os.path.join(image_output_dir, results_file)
+                        
+                        results_to_save = prepare_for_json(result)
+                        
+                        with open(results_path, 'w') as f:
+                            json.dump(results_to_save, f, indent=2)
+            
+            # Store results for this image
+            st.session_state.bulk_results.append({
+                'filename': filename,
+                'success': True,
+                'output_dir': image_output_dir,
+                'results': image_results
+            })
+            
+        except Exception as e:
+            st.session_state.bulk_results.append({
+                'filename': filename,
+                'success': False,
+                'error': str(e),
+                'output_dir': image_output_dir
+            })
+    
+    progress_bar.progress(1.0)
+    status_text.text("Bulk processing completed!")
+    st.session_state.bulk_processing_complete = True
+    
+    # Summary
+    successful = sum(1 for r in st.session_state.bulk_results if r['success'])
+    failed = total_images - successful
+    
+    st.success(f"🎉 Bulk processing completed! {successful}/{total_images} images processed successfully")
+    if failed > 0:
+        st.warning(f"⚠️ {failed} images failed to process")
+    
+    st.info(f"📁 Results saved to: {bulk_output_dir}")
 
 def save_pipeline():
     """Save current pipeline configuration."""
