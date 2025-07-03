@@ -1391,89 +1391,78 @@ def main():
         if st.session_state.bulk_images:
             st.subheader("Loaded Images")
             
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                st.write(f"**Total images:** {len(st.session_state.bulk_images)}")
-                
-                # Enhanced image list with view and remove functionality
-                with st.expander("📋 Manage image list", expanded=False):
-                    # Add selectbox to choose an image to view/manage
-                    image_options = [f"{i+1}. {filename}" for i, (_, filename) in enumerate(st.session_state.bulk_images)]
-                    
-                    if image_options:
-                        selected_option = st.selectbox(
-                            "Select an image to view or manage:",
-                            options=image_options,
-                            key="bulk_image_selector"
-                        )
-                        
-                        # Extract index from selection
-                        selected_index = int(selected_option.split('.')[0]) - 1
-                        selected_image, selected_filename = st.session_state.bulk_images[selected_index]
-                        
-                        # Create columns for actions
-                        action_col1, action_col2, action_col3 = st.columns(3)
-                        
-                        with action_col1:
-                            if st.button("�️ View Image", key=f"view_image_{selected_index}"):
-                                st.session_state.selected_bulk_image_for_view = selected_index
-                        
-                        with action_col2:
-                            if st.button("🗑️ Remove Image", key=f"remove_image_{selected_index}", type="secondary"):
-                                # Remove the selected image from the list
-                                st.session_state.bulk_images.pop(selected_index)
-                                # Clear any viewing state if we removed the currently viewed image
-                                if hasattr(st.session_state, 'selected_bulk_image_for_view'):
-                                    if st.session_state.selected_bulk_image_for_view == selected_index:
-                                        del st.session_state.selected_bulk_image_for_view
-                                    elif st.session_state.selected_bulk_image_for_view > selected_index:
-                                        st.session_state.selected_bulk_image_for_view -= 1
-                                st.success(f"✅ Removed {selected_filename}")
-                                st.rerun()
-                        
-                        with action_col3:
-                            st.write(f"**Size:** {selected_image.shape[1]}×{selected_image.shape[0]}")
-                        
-                        # Show selected image if requested
-                        if hasattr(st.session_state, 'selected_bulk_image_for_view'):
-                            if st.session_state.selected_bulk_image_for_view < len(st.session_state.bulk_images):
-                                view_image, view_filename = st.session_state.bulk_images[st.session_state.selected_bulk_image_for_view]
-                                st.subheader(f"🖼️ Viewing: {view_filename}")
-                                
-                                # Image statistics
-                                img_col1, img_col2 = st.columns([3, 1])
-                                with img_col1:
-                                    st.image(view_image, caption=view_filename, use_container_width=True)
-                                
-                                with img_col2:
-                                    st.write("**Statistics:**")
-                                    st.metric("Width", view_image.shape[1])
-                                    st.metric("Height", view_image.shape[0])
-                                    st.metric("Min Value", f"{view_image.min():.3f}")
-                                    st.metric("Max Value", f"{view_image.max():.3f}")
-                                    st.metric("Mean", f"{view_image.mean():.3f}")
-                                
-                                # Close view button
-                                if st.button("❌ Close View", key="close_image_view"):
-                                    del st.session_state.selected_bulk_image_for_view
-                                    st.rerun()
-                    else:
-                        st.info("No images in the list")
+            # Single column layout for extended width
+            st.write(f"**Total images:** {len(st.session_state.bulk_images)}")
             
-            with col2:
-                # Show first image as preview
-                if st.session_state.bulk_images:
-                    first_image, first_filename = st.session_state.bulk_images[0]
-                    st.image(first_image, caption=f"Preview: {first_filename}", use_container_width=True)
+            # Enhanced image list with view and remove functionality
+            # Keep track of expander state
+            if 'bulk_image_expander_open' not in st.session_state:
+                st.session_state.bulk_image_expander_open = False
+            
+            with st.expander("📋 Manage image list", expanded=st.session_state.bulk_image_expander_open):
+                # Add selectbox to choose an image to view/manage
+                image_options = [f"{i+1}. {filename}" for i, (_, filename) in enumerate(st.session_state.bulk_images)]
+                    
+                if image_options:
+                    # Keep expander open when user is actively using it
+                    st.session_state.bulk_image_expander_open = True
+                    
+                    selected_option = st.selectbox(
+                        "Select an image to view or manage:",
+                        options=image_options,
+                        key="bulk_image_selector"
+                    )
+                    
+                    # Extract index from selection
+                    selected_index = int(selected_option.split('.')[0]) - 1
+                    selected_image, selected_filename = st.session_state.bulk_images[selected_index]
+                    
+                    # Create columns for actions
+                    action_col1, action_col2, action_col3 = st.columns(3)
+                    
+                    with action_col1:
+                        st.write(f"**Size:** {selected_image.shape[1]}×{selected_image.shape[0]}")
+                    
+                    with action_col2:
+                        if st.button("🗑️ Remove Image", key=f"remove_image_{selected_index}", type="secondary"):
+                            # Remove the selected image from the list
+                            st.session_state.bulk_images.pop(selected_index)
+                            st.success(f"✅ Removed {selected_filename}")
+                            st.rerun()
+                    
+                    with action_col3:
+                        st.write("")  # Empty space for better alignment
+                    
+                    # Automatically display the selected image
+                    st.subheader(f"🖼️ Viewing: {selected_filename}")
+                    
+                    # Image statistics
+                    img_col1, img_col2 = st.columns([3, 1])
+                    with img_col1:
+                        st.image(selected_image, caption=selected_filename, use_container_width=True)
+                    
+                    with img_col2:
+                        st.write("**Statistics:**")
+                        st.metric("Width", selected_image.shape[1])
+                        st.metric("Height", selected_image.shape[0])
+                        st.metric("Min Value", f"{selected_image.min():.3f}")
+                        st.metric("Max Value", f"{selected_image.max():.3f}")
+                        st.metric("Mean", f"{selected_image.mean():.3f}")
+                    
+                    # Add close button
+                    if st.button("❌ Close Image List", key="close_bulk_image_expander"):
+                        st.session_state.bulk_image_expander_open = False
+                        st.rerun()
+                    
+                else:
+                    st.info("No images in the list")
             
             # Clear bulk images button
             if st.button("🗑️ Clear All Images"):
                 st.session_state.bulk_images = []
                 st.session_state.bulk_results = []
                 st.session_state.bulk_processing_complete = False
-                # Clear viewing state
-                if hasattr(st.session_state, 'selected_bulk_image_for_view'):
-                    del st.session_state.selected_bulk_image_for_view
+                st.session_state.bulk_image_expander_open = False
                 st.rerun()
         
         # Return early if no images loaded in bulk mode
