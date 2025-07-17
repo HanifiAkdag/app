@@ -10,6 +10,25 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 import json
 
+# Streamlit drawable canvas import
+try:
+    from streamlit_drawable_canvas import st_canvas
+    CANVAS_AVAILABLE = True
+    # Test if the canvas actually works with current Streamlit version
+    try:
+        # This will fail if there's a compatibility issue
+        import streamlit.elements.image
+        if not hasattr(streamlit.elements.image, 'image_to_url'):
+            # Compatibility issue detected
+            CANVAS_AVAILABLE = False
+            st_canvas = None
+    except:
+        CANVAS_AVAILABLE = False
+        st_canvas = None
+except ImportError:
+    CANVAS_AVAILABLE = False
+    st_canvas = None
+
 # Add the src directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
@@ -61,6 +80,14 @@ def initialize_session_state():
         st.session_state.bulk_processing_complete = False
     if 'bulk_results' not in st.session_state:
         st.session_state.bulk_results = []
+    
+    # Mask drawing session state
+    if 'user_mask' not in st.session_state:
+        st.session_state.user_mask = None
+    if 'mask_enabled' not in st.session_state:
+        st.session_state.mask_enabled = False
+    if 'canvas_key' not in st.session_state:
+        st.session_state.canvas_key = 0
 
 def load_and_normalize_image(uploaded_file, crop_info_bar_enabled=True):
     """Load and normalize an image to [0,1] float32, crop info bar if present, and handle TIFFs robustly."""
@@ -156,6 +183,305 @@ def save_image(image: np.ndarray, filename: str, output_dir: str) -> str:
     filepath = os.path.join(output_dir, filename)
     cv2.imwrite(filepath, image_save)
     return filepath
+
+def create_mask_drawing_interface():
+    """Create an interface for drawing masks on the current image."""
+    if not CANVAS_AVAILABLE:
+        st.error("⚠️ Streamlit Drawable Canvas not available or incompatible with current Streamlit version.")
+        st.info("🔧 **Alternative: Use Quick Templates below to create masks**")
+        
+        if st.session_state.current_image is None:
+            st.warning("⚠️ Please upload an image first to create a mask.")
+            return None
+        
+        # Show alternative mask creation methods
+        return create_alternative_mask_interface()
+    
+    if st.session_state.current_image is None:
+        st.warning("⚠️ Please upload an image first to create a mask.")
+        return None
+    
+    st.subheader("🎨 Draw Custom Mask")
+    
+    # Instructions
+    with st.expander("📝 Drawing Instructions", expanded=False):
+        st.markdown("""
+        - **White areas**: Will be included in analysis
+        - **Black areas**: Will be excluded from analysis
+        - **Freedraw**: Draw freehand shapes
+        - **Rectangle/Circle**: Click and drag to create shapes
+        - **Polygon**: Click points to create polygon, double-click to finish
+        - **Line**: Draw straight lines
+        
+        💡 **Tip**: Use a larger brush size for quick area selection, smaller for precise details.
+        """)
+    
+    # Convert current image for display
+    display_image = st.session_state.current_image.copy()
+    if display_image.dtype in [np.float32, np.float64]:
+        display_image = (np.clip(display_image, 0, 1) * 255).astype(np.uint8)
+    
+    # Convert to RGB for canvas display
+    if len(display_image.shape) == 2:
+        display_image_rgb = cv2.cvtColor(display_image, cv2.COLOR_GRAY2RGB)
+    else:
+        display_image_rgb = display_image
+    
+    # Canvas parameters in a more organized layout
+    st.write("**Drawing Tools**")
+    tool_col1, tool_col2, tool_col3, tool_col4 = st.columns(4)
+    
+    with tool_col1:
+        drawing_mode = st.selectbox("🖌️ Drawing Mode", 
+                                   ["freedraw", "line", "rect", "circle", "polygon"],
+                                   help="Choose how you want to draw the mask")
+    
+    with tool_col2:
+        stroke_width = st.slider("🖊️ Brush Size", 1, 50, 10, 
+                                help="Size of the drawing brush")
+    
+    with tool_col3:
+        stroke_color = st.color_picker("🎨 Brush Color", "#FFFFFF", 
+                                     help="Color for drawing (white = include, black = exclude)")
+    
+    with tool_col4:
+        fill_background = st.checkbox("🌑 Fill Background", value=True,
+                                    help="Fill non-drawn areas with black (exclude from analysis)")
+    
+    # Control buttons
+    st.write("**Mask Controls**")
+    ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns(4)
+    
+    with ctrl_col1:
+        if st.button("🗑️ Clear Mask", help="Clear all drawn masks"):
+            st.session_state.canvas_key += 1
+            st.session_state.user_mask = None
+            st.rerun()
+    
+    with ctrl_col2:
+        invert_mask = st.checkbox("🔄 Invert Mask", value=False,
+                                help="Invert the mask colors (swap include/exclude areas)")
+    
+    with ctrl_col3:
+        # Canvas size options
+        canvas_scale = st.selectbox("📏 Canvas Size", 
+                                   options=[0.5, 0.75, 1.0, 1.25], 
+                                   index=2,
+                                   format_func=lambda x: f"{int(x*100)}%",
+                                   help="Scale the canvas for easier drawing")
+    
+    with ctrl_col4:
+        # Quick mask templates
+        if st.button("⚡ Quick Templates", help="Apply common mask patterns"):
+            st.session_state.show_templates = not st.session_state.get('show_templates', False)
+    
+    # Quick mask templates
+    if st.session_state.get('show_templates', False):
+        create_quick_mask_templates(display_image)
+    
+    # Calculate canvas dimensions
+    canvas_height = min(int(600 * canvas_scale), int(display_image.shape[0] * canvas_scale))
+    canvas_width = min(int(800 * canvas_scale), int(display_image.shape[1] * canvas_scale))
+    
+    # Try to create the canvas, fall back if it fails
+    try:
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 255, 255, 0.0)",  # Transparent fill
+            stroke_width=stroke_width,
+            stroke_color=stroke_color,
+            background_color="#000000" if fill_background else "#FFFFFF",
+            background_image=Image.fromarray(display_image_rgb),
+            update_streamlit=True,
+            height=canvas_height,
+            width=canvas_width,
+            drawing_mode=drawing_mode,
+            key=f"mask_canvas_{st.session_state.canvas_key}",
+        )
+        
+        # Process the drawn mask
+        if canvas_result.image_data is not None:
+            # Extract the mask from the canvas
+            mask_data = canvas_result.image_data[:, :, 3]  # Alpha channel
+            
+            # Resize mask to match original image size if needed
+            if mask_data.shape != display_image.shape[:2]:
+                mask_data = cv2.resize(mask_data, (display_image.shape[1], display_image.shape[0]), 
+                                     interpolation=cv2.INTER_NEAREST)
+            
+            # Convert to binary mask
+            binary_mask = mask_data > 128  # Threshold to create binary mask
+            
+            # Apply inversion if requested
+            if invert_mask:
+                binary_mask = ~binary_mask
+            
+            # Store the mask
+            st.session_state.user_mask = binary_mask.astype(np.uint8) * 255
+            
+            # Show mask preview
+            if np.any(binary_mask):
+                show_mask_preview(display_image, binary_mask)
+    
+    except Exception as e:
+        st.error(f"Canvas drawing failed: {str(e)}")
+        st.info("🔧 **Fallback: Use Quick Templates below to create masks**")
+        return create_alternative_mask_interface()
+    
+    return st.session_state.user_mask
+
+def create_quick_mask_templates(display_image):
+    """Create quick mask template buttons."""
+    st.write("**Quick Mask Templates**")
+    template_col1, template_col2, template_col3, template_col4 = st.columns(4)
+    
+    with template_col1:
+        if st.button("🟫 Center Region", help="Mask the center 50% of the image"):
+            h, w = display_image.shape[:2]
+            mask = np.zeros((h, w), dtype=np.uint8)
+            mask[h//4:3*h//4, w//4:3*w//4] = 255
+            st.session_state.user_mask = mask
+            st.rerun()
+    
+    with template_col2:
+        if st.button("🟩 Remove Edges", help="Exclude a 10% border around the image"):
+            h, w = display_image.shape[:2]
+            mask = np.ones((h, w), dtype=np.uint8) * 255
+            border = min(h, w) // 10
+            mask[:border, :] = 0
+            mask[-border:, :] = 0
+            mask[:, :border] = 0
+            mask[:, -border:] = 0
+            st.session_state.user_mask = mask
+            st.rerun()
+    
+    with template_col3:
+        if st.button("🟪 Full Image", help="Include the entire image"):
+            h, w = display_image.shape[:2]
+            mask = np.ones((h, w), dtype=np.uint8) * 255
+            st.session_state.user_mask = mask
+            st.rerun()
+    
+    with template_col4:
+        if st.button("⬜ Clear All", help="Exclude the entire image"):
+            h, w = display_image.shape[:2]
+            mask = np.zeros((h, w), dtype=np.uint8)
+            st.session_state.user_mask = mask
+            st.rerun()
+
+def create_alternative_mask_interface():
+    """Create alternative mask creation interface when canvas is not available."""
+    if st.session_state.current_image is None:
+        return None
+    
+    display_image = st.session_state.current_image.copy()
+    if display_image.dtype in [np.float32, np.float64]:
+        display_image = (np.clip(display_image, 0, 1) * 255).astype(np.uint8)
+    
+    st.subheader("🔧 Alternative Mask Creation")
+    st.info("Create masks using geometric shapes and regions since drawable canvas is not available.")
+    
+    # Shape-based mask creation
+    mask_type = st.selectbox("Mask Type", 
+                            ["Rectangular Region", "Circular Region", "Border Exclusion", "Intensity Threshold", "Custom Templates"])
+    
+    h, w = display_image.shape[:2]
+    
+    if mask_type == "Rectangular Region":
+        col1, col2 = st.columns(2)
+        with col1:
+            x_start = st.slider("X Start (%)", 0, 100, 25, help="Left edge of rectangle")
+            y_start = st.slider("Y Start (%)", 0, 100, 25, help="Top edge of rectangle")
+        with col2:
+            x_end = st.slider("X End (%)", 0, 100, 75, help="Right edge of rectangle")
+            y_end = st.slider("Y End (%)", 0, 100, 75, help="Bottom edge of rectangle")
+        
+        if st.button("Create Rectangular Mask"):
+            mask = np.zeros((h, w), dtype=np.uint8)
+            x1, y1 = int(x_start * w / 100), int(y_start * h / 100)
+            x2, y2 = int(x_end * w / 100), int(y_end * h / 100)
+            mask[y1:y2, x1:x2] = 255
+            st.session_state.user_mask = mask
+            st.rerun()
+    
+    elif mask_type == "Circular Region":
+        col1, col2 = st.columns(2)
+        with col1:
+            center_x = st.slider("Center X (%)", 0, 100, 50)
+            center_y = st.slider("Center Y (%)", 0, 100, 50)
+        with col2:
+            radius = st.slider("Radius (%)", 1, 50, 25, help="Radius as percentage of image size")
+        
+        if st.button("Create Circular Mask"):
+            mask = np.zeros((h, w), dtype=np.uint8)
+            cx, cy = int(center_x * w / 100), int(center_y * h / 100)
+            r = int(radius * min(h, w) / 100)
+            cv2.circle(mask, (cx, cy), r, 255, -1)
+            st.session_state.user_mask = mask
+            st.rerun()
+    
+    elif mask_type == "Border Exclusion":
+        border_size = st.slider("Border Size (%)", 0, 25, 10, help="Size of border to exclude")
+        
+        if st.button("Create Border Exclusion Mask"):
+            mask = np.ones((h, w), dtype=np.uint8) * 255
+            border = int(border_size * min(h, w) / 100)
+            mask[:border, :] = 0
+            mask[-border:, :] = 0
+            mask[:, :border] = 0
+            mask[:, -border:] = 0
+            st.session_state.user_mask = mask
+            st.rerun()
+    
+    elif mask_type == "Intensity Threshold":
+        col1, col2 = st.columns(2)
+        with col1:
+            threshold_type = st.selectbox("Threshold Type", ["Above Threshold", "Below Threshold", "Between Thresholds"])
+            min_thresh = st.slider("Min Threshold", 0, 255, 50)
+        with col2:
+            if threshold_type == "Between Thresholds":
+                max_thresh = st.slider("Max Threshold", 0, 255, 200)
+            else:
+                max_thresh = 255
+        
+        if st.button("Create Intensity-Based Mask"):
+            mask = np.zeros((h, w), dtype=np.uint8)
+            if threshold_type == "Above Threshold":
+                mask[display_image >= min_thresh] = 255
+            elif threshold_type == "Below Threshold":
+                mask[display_image <= min_thresh] = 255
+            else:  # Between Thresholds
+                mask[(display_image >= min_thresh) & (display_image <= max_thresh)] = 255
+            st.session_state.user_mask = mask
+            st.rerun()
+    
+    elif mask_type == "Custom Templates":
+        create_quick_mask_templates(display_image)
+    
+    # Show current mask if it exists
+    if st.session_state.user_mask is not None:
+        binary_mask = st.session_state.user_mask > 128
+        show_mask_preview(display_image, binary_mask)
+    
+    return st.session_state.user_mask
+
+def show_mask_preview(display_image, binary_mask):
+    """Show mask preview with statistics."""
+    st.subheader("🔍 Mask Preview")
+    preview_col1, preview_col2, preview_col3 = st.columns(3)
+    
+    with preview_col1:
+        st.write("**Original Image**")
+        st.image(display_image, caption="Original", use_column_width=True, clamp=True)
+    
+    with preview_col2:
+        st.write("**Drawn Mask**")
+        st.image(st.session_state.user_mask, caption="White = Include, Black = Exclude", use_column_width=True, clamp=True)
+    
+    with preview_col3:
+        st.write("**Masked Result**")
+        masked_image = display_image.copy()
+        masked_image[~binary_mask] = 0
+        st.image(masked_image, caption="Analysis regions", use_column_width=True, clamp=True)
 
 # Operation parameter UIs
 def create_preprocessing_params_ui(step_id: str, existing_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -875,11 +1201,11 @@ def display_pipeline_results():
                     
                     with col1:
                         st.write("**Input Image**")
-                        st.image(input_image, caption="Before Processing", use_container_width=True)
+                        st.image(input_image, caption="Before Processing")
                     
                     with col2:
                         st.write("**After Denoising + Illumination Correction**")
-                        st.image(output_image, caption="After Processing", use_container_width=True)
+                        st.image(output_image, caption="After Processing")
                     
                     with col3:
                         # Show processing statistics
@@ -902,7 +1228,7 @@ def display_pipeline_results():
                     with col4:
                         st.write("**Material Mask**")
                         if material_mask is not None and isinstance(material_mask, np.ndarray):
-                            st.image(material_mask, caption="Material Regions", use_container_width=True)
+                            st.image(material_mask, caption="Material Regions")
                         else:
                             st.info("No material mask available")
                     
@@ -915,7 +1241,7 @@ def display_pipeline_results():
                             else:
                                 masked_image[~material_mask] = 0
                             st.write("**Masked Result**")
-                            st.image(masked_image, caption="Material Only", use_container_width=True)
+                            st.image(masked_image, caption="Material Only")
                         else:
                             st.write("**Masked Result**")
                             st.info("No material mask available")
@@ -940,11 +1266,11 @@ def display_pipeline_results():
                     
                     with col1:
                         st.write("**Input Image**")
-                        st.image(input_image, caption="Before Processing", use_container_width=True)
+                        st.image(input_image, caption="Before Processing")
                     
                     with col2:
                         st.write("**Processed Image**")
-                        st.image(output_image, caption="After Processing", use_container_width=True)
+                        st.image(output_image, caption="After Processing")
                     
                     # Second row for statistics only
                     col3, col4 = st.columns(2)
@@ -1039,7 +1365,7 @@ def display_pipeline_results():
                                     original_image, processed_image, phase_masks, background_mask,
                                     color_mode='palette', palette_name='viridis'
                                 )
-                                st.pyplot(fig, use_container_width=True)
+                                st.pyplot(fig)
                                 plt.close(fig)
                             else:
                                 st.warning("⚠️ Phase segmentation visualization data not available")
@@ -1109,7 +1435,7 @@ def display_pipeline_results():
                                     fig = analyzer.create_visualization_overlay(
                                         original_image, lines, colormap='hsv'
                                     )
-                                    st.pyplot(fig, use_container_width=True)
+                                    st.pyplot(fig)
                                     plt.close(fig)
                                     
                                     # Create and show histograms if available
@@ -1128,7 +1454,7 @@ def display_pipeline_results():
                                                     hough_data['hist'], hough_data['bins'], hough_data['dominant'],
                                                     "Hough Line Orientations", 'blue'
                                                 )
-                                                st.pyplot(hough_fig, use_container_width=True)
+                                                st.pyplot(hough_fig)
                                                 plt.close(hough_fig)
                                         
                                         # Sobel histogram
@@ -1139,7 +1465,7 @@ def display_pipeline_results():
                                                     sobel_data['hist'], sobel_data['bins'], sobel_data['dominant'],
                                                     "Sobel Edge Orientations", 'green'
                                                 )
-                                                st.pyplot(sobel_fig, use_container_width=True)
+                                                st.pyplot(sobel_fig)
                                                 plt.close(sobel_fig)
                                 
                                 else:
@@ -1333,7 +1659,7 @@ def main():
                     st.success("✅ Image loaded successfully")
                     
                     # Display the uploaded image
-                    st.image(st.session_state.original_image, caption="Uploaded Image", use_container_width=True)
+                    st.image(st.session_state.original_image, caption="Uploaded Image")
                 else:
                     st.error("❌ Failed to load image")
                     return
@@ -1439,7 +1765,7 @@ def main():
                     # Image statistics
                     img_col1, img_col2 = st.columns([3, 1])
                     with img_col1:
-                        st.image(selected_image, caption=selected_filename, use_container_width=True)
+                        st.image(selected_image, caption=selected_filename)
                     
                     with img_col2:
                         st.write("**Statistics:**")
@@ -1470,6 +1796,86 @@ def main():
             st.warning("⚠️ Please upload and load images to begin")
             return
     
+    # Mask Drawing Section (only for single image mode)
+    if not st.session_state.bulk_mode and st.session_state.current_image is not None:
+        st.header("🎨 Custom Mask Drawing (Optional)")
+        
+        # Add info about mask drawing
+        with st.expander("ℹ️ About Mask Drawing", expanded=False):
+            st.markdown("""
+            **Mask drawing allows you to:**
+            - Define specific regions of interest for analysis
+            - Exclude unwanted areas (artifacts, text, scale bars, etc.)
+            - Focus analysis on particular features or phases
+            
+            **How to use:**
+            1. Enable mask drawing below
+            2. Choose your drawing tool and brush settings
+            3. Draw on the image (white = include, black = exclude)
+            4. Use the preview to see the effect
+            5. Proceed with your pipeline - the mask will be applied automatically
+            """)
+        
+        # Check if drawable canvas is available
+        if not CANVAS_AVAILABLE:
+            st.warning("⚠️ Streamlit Drawable Canvas not available or incompatible with current Streamlit version.")
+            st.info("""
+            **Alternative mask creation options are available:**
+            - Geometric shapes (rectangles, circles)
+            - Intensity-based thresholding
+            - Quick templates
+            - Border exclusion
+            
+            Enable mask drawing below to access these features.
+            """)
+        else:
+            # Enable/disable mask drawing
+            st.session_state.mask_enabled = st.checkbox(
+                "🎨 Enable Mask Drawing", 
+                value=st.session_state.mask_enabled,
+                help="Draw custom masks to define regions for analysis. This is optional - leave unchecked to analyze the entire image."
+            )
+            
+            if st.session_state.mask_enabled:
+                user_mask = create_mask_drawing_interface()
+                
+                if user_mask is not None:
+                    st.success("✅ Custom mask created! This mask will be used in the analysis pipeline.")
+                    
+                    # Show mask statistics
+                    mask_binary = user_mask > 128
+                    total_pixels = mask_binary.size
+                    masked_pixels = np.sum(mask_binary)
+                    mask_percentage = (masked_pixels / total_pixels) * 100
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Mask Coverage", f"{mask_percentage:.1f}%")
+                    with col2:
+                        st.metric("Included Pixels", f"{masked_pixels:,}")
+                    with col3:
+                        st.metric("Total Pixels", f"{total_pixels:,}")
+                    
+                    # Option to apply mask immediately to current image preview
+                    if st.checkbox("👁️ Preview Masked Image", help="Show how the mask affects the current image"):
+                        masked_preview = st.session_state.current_image.copy()
+                        masked_preview[~mask_binary] = 0
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write("**Original Image**")
+                            st.image(st.session_state.current_image, caption="Full image", use_column_width=True)
+                        with col2:
+                            st.write("**Masked Image Preview**")
+                            st.image(masked_preview, caption="Areas in white will be analyzed", use_column_width=True)
+            else:
+                # Clear the mask if disabled
+                if st.session_state.user_mask is not None:
+                    st.session_state.user_mask = None
+                    st.info("🔄 Mask drawing disabled. Full image will be analyzed.")
+                else:
+                    st.info("💡 Enable mask drawing above to define custom regions for analysis.")
+
     # Pipeline Steps Management
     st.header("🔧 Pipeline Steps")
     
@@ -1497,15 +1903,15 @@ def main():
     
     with col2:
         if st.session_state.pipeline_steps:
-            if st.button("💾 Save Pipeline", use_container_width=True):
+            if st.button("💾 Save Pipeline"):
                 save_pipeline()
         else:
-            st.button("💾 Save Pipeline", use_container_width=True, disabled=True, 
+            st.button("💾 Save Pipeline", disabled=True, 
                      help="Add pipeline steps first")
     
     with col3:
         if st.session_state.pipeline_steps:
-            if st.button("🗑️ Clear All", use_container_width=True, 
+            if st.button("🗑️ Clear All", 
                         help="Remove all pipeline steps"):
                 st.session_state.pipeline_steps = []
                 st.session_state.pipeline_results = []
@@ -1515,19 +1921,19 @@ def main():
                 st.session_state.file_uploader_key += 1  # Reset file uploader
                 st.rerun()
         else:
-            st.button("🗑️ Clear All", use_container_width=True, disabled=True,
+            st.button("🗑️ Clear All", disabled=True,
                      help="No steps to clear")
     
     with col4:
         if st.session_state.uploaded_pipeline_name is not None:
-            if st.button("📤 Clear Upload", use_container_width=True,
+            if st.button("📤 Clear Upload",
                         help="Clear uploaded pipeline file to enable adding new steps"):
                 st.session_state.uploaded_pipeline_name = None
                 st.session_state.pipeline_loaded = False
                 st.session_state.file_uploader_key += 1  # Reset file uploader
                 st.rerun()
         else:
-            st.button("📤 Clear Upload", use_container_width=True, disabled=True,
+            st.button("📤 Clear Upload", disabled=True,
                      help="No uploaded pipeline to clear")
     
     st.divider()
@@ -1617,7 +2023,7 @@ def main():
         )
     
     with col2:
-        if st.button("➕ Add Step", use_container_width=True):
+        if st.button("➕ Add Step"):
             step_id = len(st.session_state.pipeline_steps) + 1
             st.session_state.pipeline_steps.append({
                 'id': step_id,
@@ -1640,11 +2046,11 @@ def main():
                 
                 with col1:
                     if not st.session_state.bulk_processing_complete:
-                        if st.button("▶️ Run Bulk Pipeline", type="primary", use_container_width=True):
+                        if st.button("▶️ Run Bulk Pipeline", type="primary"):
                             execute_bulk_pipeline()
                     else:
                         st.success("✅ Bulk processing completed!")
-                        if st.button("🔄 Run Again", use_container_width=True):
+                        if st.button("🔄 Run Again"):
                             st.session_state.bulk_processing_complete = False
                             st.session_state.bulk_results = []
                             st.rerun()
@@ -1668,7 +2074,7 @@ def main():
             col1, col2 = st.columns([1, 1])
             
             with col1:
-                if st.button("▶️ Run Pipeline", type="primary", use_container_width=True):
+                if st.button("▶️ Run Pipeline", type="primary"):
                     execute_pipeline()
             
             with col2:
@@ -1687,6 +2093,14 @@ def execute_pipeline():
     current_image = st.session_state.original_image.copy()
     material_mask = st.session_state.material_mask
     
+    # Use custom mask if available
+    if st.session_state.user_mask is not None and st.session_state.mask_enabled:
+        # Convert user mask to binary and use as material mask
+        custom_mask = (st.session_state.user_mask > 128).astype(bool)
+        material_mask = custom_mask
+        st.session_state.material_mask = material_mask
+        st.info("🎨 Using custom drawn mask for analysis")
+    
     def prepare_for_json(obj):
         """Recursively prepare object for JSON serialization."""
         if isinstance(obj, np.ndarray):
@@ -1703,6 +2117,16 @@ def execute_pipeline():
             return str(obj)
     
     with st.spinner("Executing pipeline..."):
+        # Save custom mask if used
+        if st.session_state.user_mask is not None and st.session_state.mask_enabled and st.session_state.output_dir:
+            custom_mask_filename = "custom_drawn_mask.png"
+            save_image(st.session_state.user_mask, custom_mask_filename, st.session_state.output_dir)
+            
+            # Also save the binary version used in analysis
+            binary_mask_filename = "custom_binary_mask.png"
+            binary_mask_save = (material_mask.astype(np.uint8) * 255) if material_mask is not None else np.zeros_like(current_image, dtype=np.uint8)
+            save_image(binary_mask_save, binary_mask_filename, st.session_state.output_dir)
+        
         for i, step in enumerate(st.session_state.pipeline_steps):
             operation = step['operation']
             params = step['params']

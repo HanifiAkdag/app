@@ -4,6 +4,7 @@ Streamlit-based microscopy image analysis tool for materials science with custom
 
 ## 🚀 Features
 
+- **Custom Mask Drawing**: Interactive canvas for drawing custom analysis regions
 - **Phase Analysis**: Automatic detection, K-means/manual segmentation, statistical analysis
 - **Line Analysis**: Frangi filter, Hough transform, orientation analysis  
 - **Artifact Removal**: Multiple detection methods, advanced inpainting (Telea, Navier-Stokes, LaMa)
@@ -29,6 +30,8 @@ source venv/bin/activate
 ```bash
 pip install -r requirements.txt
 ```
+
+**Note:** For the mask drawing feature, `streamlit-drawable-canvas` is included in requirements.txt and will be installed automatically.
 
 ### Verify Installation
 ```bash
