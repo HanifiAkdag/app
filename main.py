@@ -263,23 +263,19 @@ def create_mask_drawing_interface():
                                 help="Invert the mask colors (swap include/exclude areas)")
     
     with ctrl_col3:
-        # Canvas size options
-        canvas_scale = st.selectbox("📏 Canvas Size", 
-                                   options=[0.5, 0.75, 1.0, 1.25], 
-                                   index=2,
-                                   format_func=lambda x: f"{int(x*100)}%",
-                                   help="Scale the canvas for easier drawing")
-    
-    with ctrl_col4:
         # Quick mask templates
         if st.button("⚡ Quick Templates", help="Apply common mask patterns"):
             st.session_state.show_templates = not st.session_state.get('show_templates', False)
+    
+    with ctrl_col4:
+        st.write("")  # Empty space for alignment
     
     # Quick mask templates
     if st.session_state.get('show_templates', False):
         create_quick_mask_templates(display_image)
     
-    # Calculate canvas dimensions
+    # Calculate canvas dimensions with 100% scale
+    canvas_scale = 1.0  # Fixed at 100%
     canvas_height = min(int(600 * canvas_scale), int(display_image.shape[0] * canvas_scale))
     canvas_width = min(int(800 * canvas_scale), int(display_image.shape[1] * canvas_scale))
     
@@ -1672,8 +1668,9 @@ def main():
                     st.session_state.output_dir = create_output_directory(uploaded_file.name)
                     st.success("✅ Image loaded successfully")
                     
-                    # Display the uploaded image
-                    st.image(st.session_state.original_image, caption="Uploaded Image")
+                    # Display the uploaded image in a collapsible dropdown
+                    with st.expander("🔍 View Uploaded Image", expanded=False):
+                        st.image(st.session_state.original_image, caption="Uploaded Image")
                 else:
                     st.error("❌ Failed to load image")
                     return
