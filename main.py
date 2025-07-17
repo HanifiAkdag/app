@@ -778,7 +778,7 @@ def create_line_analysis_params_ui(step_id: str, existing_params: Optional[Dict[
             st.info("🔍 Enhances linear structures using multiscale filtering.")
             
             # Extract sigma range from existing params if available
-            existing_sigmas = frangi_defaults.get('sigmas', range(1, 9, 2))  # Default range(1, 9, 2)
+            existing_sigmas = frangi_defaults.get('sigmas', [1, 3, 5, 7])  # Default list [1, 3, 5, 7]
             if hasattr(existing_sigmas, '__iter__') and not isinstance(existing_sigmas, str):
                 # Convert range or list to min, max, step
                 sigma_list = list(existing_sigmas)
@@ -847,7 +847,7 @@ def create_line_analysis_params_ui(step_id: str, existing_params: Optional[Dict[
     
     return {
         'frangi': {
-            'sigmas': range(sigma_min, sigma_max + 1, sigma_step),
+            'sigmas': list(range(sigma_min, sigma_max + 1, sigma_step)),
             'black_ridges': black_ridges
         },
         'hough': {

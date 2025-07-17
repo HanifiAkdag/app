@@ -19,7 +19,7 @@ class LineAnalyzer:
         
     def apply_frangi_filter(self, 
                            image: np.ndarray, 
-                           sigmas: range = range(1, 8, 2), 
+                           sigmas: list = [1, 3, 5, 7], 
                            black_ridges: bool = False) -> np.ndarray:
         """
         Applies the Frangi filter to enhance vessel-like structures.
@@ -441,7 +441,7 @@ class LineAnalyzer:
             # 2. Frangi filtering
             ridge_image = self.apply_frangi_filter(
                 processed_image,
-                frangi_params.get('sigmas', range(1, 8, 2)),
+                frangi_params.get('sigmas', [1, 3, 5, 7]),
                 frangi_params.get('black_ridges', False)
             )
             
@@ -591,7 +591,7 @@ def get_default_parameters() -> Dict[str, Dict[str, Any]]:
             'denoise_params': {'gaussian_sigma': 1.0}
         },
         'frangi': {
-            'sigmas': range(1, 8, 2),
+            'sigmas': [1, 3, 5, 7],
             'black_ridges': False
         },
         'hough': {
