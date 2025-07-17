@@ -188,7 +188,7 @@ def create_mask_drawing_interface():
     """Create an interface for drawing masks on the current image."""
     if not CANVAS_AVAILABLE:
         st.error("⚠️ Streamlit Drawable Canvas not available or incompatible with current Streamlit version.")
-        st.info("🔧 **Alternative: Use Quick Templates below to create masks**")
+        st.info("🔧 **Alternative: Use geometric shapes and regions below to create masks**")
         
         if st.session_state.current_image is None:
             st.warning("⚠️ Please upload an image first to create a mask.")
@@ -203,19 +203,6 @@ def create_mask_drawing_interface():
     
     st.subheader("🎨 Draw Custom Mask")
     
-    # Instructions
-    with st.expander("📝 Drawing Instructions", expanded=False):
-        st.markdown("""
-        - **Red areas**: Will be excluded from analysis (masked out)
-        - **White areas**: Will be included in analysis
-        - **Freedraw**: Draw freehand shapes
-        - **Rectangle/Circle**: Click and drag to create shapes
-        - **Polygon**: Click points to create polygon, double-click to finish
-        - **Line**: Draw straight lines
-        
-        💡 **Tip**: Use a larger brush size for quick area selection, smaller for precise details.
-        """)
-    
     # Convert current image for display
     display_image = st.session_state.current_image.copy()
     if display_image.dtype in [np.float32, np.float64]:
@@ -229,7 +216,7 @@ def create_mask_drawing_interface():
     
     # Canvas parameters in a more organized layout
     st.write("**Drawing Tools**")
-    tool_col1, tool_col2, tool_col3, tool_col4 = st.columns(4)
+    tool_col1, tool_col2, tool_col3 = st.columns(3)
     
     with tool_col1:
         drawing_mode = st.selectbox("🖌️ Drawing Mode", 
@@ -244,13 +231,9 @@ def create_mask_drawing_interface():
         stroke_color = st.color_picker("🎨 Brush Color", "#FF0000", 
                                      help="Color for drawing (red = exclude, use eraser to include)")
     
-    with tool_col4:
-        fill_background = st.checkbox("🌑 Fill Background", value=False,
-                                    help="Fill non-drawn areas with black (exclude from analysis)")
-    
-    # Control buttons
+    # Control buttons - redesigned for better layout
     st.write("**Mask Controls**")
-    ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns(4)
+    ctrl_col1, ctrl_col2 = st.columns(2)
     
     with ctrl_col1:
         if st.button("🗑️ Clear Mask", help="Clear all drawn masks"):
@@ -261,18 +244,6 @@ def create_mask_drawing_interface():
     with ctrl_col2:
         invert_mask = st.checkbox("🔄 Invert Mask", value=False,
                                 help="Invert the mask colors (swap include/exclude areas)")
-    
-    with ctrl_col3:
-        # Quick mask templates
-        if st.button("⚡ Quick Templates", help="Apply common mask patterns"):
-            st.session_state.show_templates = not st.session_state.get('show_templates', False)
-    
-    with ctrl_col4:
-        st.write("")  # Empty space for alignment
-    
-    # Quick mask templates
-    if st.session_state.get('show_templates', False):
-        create_quick_mask_templates(display_image)
     
     # Calculate canvas dimensions with 100% scale
     canvas_scale = 1.0  # Fixed at 100%
@@ -285,7 +256,7 @@ def create_mask_drawing_interface():
             fill_color="rgba(255, 255, 255, 0.0)",  # Transparent fill
             stroke_width=stroke_width,
             stroke_color=stroke_color,
-            background_color="#FFFFFF" if fill_background else "#000000",
+            background_color="#000000",  # Black background
             background_image=Image.fromarray(display_image_rgb),
             update_streamlit=True,
             height=canvas_height,
@@ -314,12 +285,6 @@ def create_mask_drawing_interface():
             red_pixels = (canvas_rgb[:, :, 0] > 200) & (canvas_rgb[:, :, 1] < 100) & (canvas_rgb[:, :, 2] < 100) & (alpha_channel > 128)
             mask[red_pixels] = 0  # Exclude red areas
             
-            # Apply background fill if requested
-            if fill_background:
-                # If fill background is checked, exclude areas that weren't drawn on
-                drawn_areas = alpha_channel > 128
-                mask[~drawn_areas] = 0
-            
             # Apply inversion if requested
             if invert_mask:
                 mask = 255 - mask
@@ -334,49 +299,10 @@ def create_mask_drawing_interface():
     
     except Exception as e:
         st.error(f"Canvas drawing failed: {str(e)}")
-        st.info("🔧 **Fallback: Use Quick Templates below to create masks**")
+        st.info("🔧 **Fallback: Use geometric shapes and regions below to create masks**")
         return create_alternative_mask_interface()
     
     return st.session_state.user_mask
-
-def create_quick_mask_templates(display_image):
-    """Create quick mask template buttons."""
-    st.write("**Quick Mask Templates**")
-    template_col1, template_col2, template_col3, template_col4 = st.columns(4)
-    
-    with template_col1:
-        if st.button("🟫 Center Region", help="Include only the center 50% of the image"):
-            h, w = display_image.shape[:2]
-            mask = np.zeros((h, w), dtype=np.uint8)
-            mask[h//4:3*h//4, w//4:3*w//4] = 255
-            st.session_state.user_mask = mask
-            st.rerun()
-    
-    with template_col2:
-        if st.button("🟩 Remove Edges", help="Exclude a 10% border around the image"):
-            h, w = display_image.shape[:2]
-            mask = np.ones((h, w), dtype=np.uint8) * 255
-            border = min(h, w) // 10
-            mask[:border, :] = 0
-            mask[-border:, :] = 0
-            mask[:, :border] = 0
-            mask[:, -border:] = 0
-            st.session_state.user_mask = mask
-            st.rerun()
-    
-    with template_col3:
-        if st.button("🟪 Full Image", help="Include the entire image"):
-            h, w = display_image.shape[:2]
-            mask = np.ones((h, w), dtype=np.uint8) * 255
-            st.session_state.user_mask = mask
-            st.rerun()
-    
-    with template_col4:
-        if st.button("⬜ Clear All", help="Exclude the entire image"):
-            h, w = display_image.shape[:2]
-            mask = np.zeros((h, w), dtype=np.uint8)
-            st.session_state.user_mask = mask
-            st.rerun()
 
 def create_alternative_mask_interface():
     """Create alternative mask creation interface when canvas is not available."""
@@ -392,7 +318,7 @@ def create_alternative_mask_interface():
     
     # Shape-based mask creation
     mask_type = st.selectbox("Mask Type", 
-                            ["Rectangular Region", "Circular Region", "Border Exclusion", "Intensity Threshold", "Custom Templates"])
+                            ["Rectangular Region", "Circular Region", "Border Exclusion", "Intensity Threshold"])
     
     h, w = display_image.shape[:2]
     
@@ -463,9 +389,6 @@ def create_alternative_mask_interface():
                 mask[(display_image >= min_thresh) & (display_image <= max_thresh)] = 255
             st.session_state.user_mask = mask
             st.rerun()
-    
-    elif mask_type == "Custom Templates":
-        create_quick_mask_templates(display_image)
     
     # Show current mask if it exists
     if st.session_state.user_mask is not None:
@@ -1834,7 +1757,6 @@ def main():
             **Alternative mask creation options are available:**
             - Geometric shapes (rectangles, circles)
             - Intensity-based thresholding
-            - Quick templates
             - Border exclusion
             
             Enable mask drawing below to access these features.
@@ -1866,19 +1788,6 @@ def main():
                         st.metric("Included Pixels", f"{masked_pixels:,}")
                     with col3:
                         st.metric("Total Pixels", f"{total_pixels:,}")
-                    
-                    # Option to apply mask immediately to current image preview
-                    if st.checkbox("👁️ Preview Masked Image", help="Show how the mask affects the current image"):
-                        masked_preview = st.session_state.current_image.copy()
-                        masked_preview[~mask_binary] = 0
-                        
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.write("**Original Image**")
-                            st.image(st.session_state.current_image, caption="Full image", use_column_width=True)
-                        with col2:
-                            st.write("**Masked Image Preview**")
-                            st.image(masked_preview, caption="Areas in white will be analyzed", use_column_width=True)
             else:
                 # Clear the mask if disabled
                 if st.session_state.user_mask is not None:
