@@ -1890,65 +1890,6 @@ def main():
     # Pipeline Steps Management
     st.header("🔧 Pipeline Steps")
     
-    # Pipeline load/save section at the top
-    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
-    
-    with col1:
-        uploaded_pipeline = st.file_uploader("📂 Load Pipeline", type=['json'], 
-                                           help="Upload a previously saved pipeline configuration",
-                                           key=f"pipeline_uploader_{st.session_state.file_uploader_key}")
-        if uploaded_pipeline is not None:
-            # Check if this is a new upload or the same file being reprocessed
-            if st.session_state.uploaded_pipeline_name != uploaded_pipeline.name:
-                st.session_state.uploaded_pipeline_name = uploaded_pipeline.name
-                st.session_state.pipeline_loaded = False
-            
-            # Only load if we haven't processed this file yet
-            if not st.session_state.pipeline_loaded:
-                load_pipeline(uploaded_pipeline)
-        else:
-            # Reset when no file is uploaded
-            if st.session_state.uploaded_pipeline_name is not None:
-                st.session_state.uploaded_pipeline_name = None
-                st.session_state.pipeline_loaded = False
-    
-    with col2:
-        if st.session_state.pipeline_steps:
-            if st.button("💾 Save Pipeline"):
-                save_pipeline()
-        else:
-            st.button("💾 Save Pipeline", disabled=True, 
-                     help="Add pipeline steps first")
-    
-    with col3:
-        if st.session_state.pipeline_steps:
-            if st.button("🗑️ Clear All", 
-                        help="Remove all pipeline steps"):
-                st.session_state.pipeline_steps = []
-                st.session_state.pipeline_results = []
-                # Only reset upload state when explicitly clearing all
-                st.session_state.pipeline_loaded = False
-                st.session_state.uploaded_pipeline_name = None
-                st.session_state.file_uploader_key += 1  # Reset file uploader
-                st.rerun()
-        else:
-            st.button("🗑️ Clear All", disabled=True,
-                     help="No steps to clear")
-    
-    with col4:
-        if st.session_state.uploaded_pipeline_name is not None:
-            if st.button("📤 Clear Upload",
-                        help="Clear uploaded pipeline file to enable adding new steps"):
-                st.session_state.uploaded_pipeline_name = None
-                st.session_state.pipeline_loaded = False
-                st.session_state.file_uploader_key += 1  # Reset file uploader
-                st.rerun()
-        else:
-            st.button("📤 Clear Upload", disabled=True,
-                     help="No uploaded pipeline to clear")
-    
-    st.divider()
-    
     # Show current pipeline steps first
     if st.session_state.pipeline_steps:
         st.subheader("Current Pipeline")
@@ -1968,21 +1909,105 @@ def main():
         # Show pipeline flow
         st.write(" → ".join(pipeline_display))
         
-        # Individual step removal
-        st.write("**Remove Individual Steps:**")
-        cols = st.columns(len(st.session_state.pipeline_steps))
-        for i, (col, step) in enumerate(zip(cols, st.session_state.pipeline_steps)):
-            with col:
-                if st.button(f"❌ Step {i+1}", key=f"remove_{i}", help=f"Remove {operation_options[step['operation']]}"):
-                    st.session_state.pipeline_steps.pop(i)
-                    # Only reset upload state if no steps remain
-                    if len(st.session_state.pipeline_steps) == 0:
+        # Pipeline management tools
+        st.write("**Pipeline Management:**")
+        mgmt_col1, mgmt_col2, mgmt_col3, mgmt_col4 = st.columns([2, 1, 1, 1])
+        
+        with mgmt_col1:
+            # Individual step removal
+            st.write("Remove Individual Steps:")
+            step_cols = st.columns(len(st.session_state.pipeline_steps))
+            for i, (col, step) in enumerate(zip(step_cols, st.session_state.pipeline_steps)):
+                with col:
+                    if st.button(f"❌ Step {i+1}", key=f"remove_{i}", help=f"Remove {operation_options[step['operation']]}"):
+                        st.session_state.pipeline_steps.pop(i)
+                        # Only reset upload state if no steps remain
+                        if len(st.session_state.pipeline_steps) == 0:
+                            st.session_state.pipeline_loaded = False
+                            st.session_state.uploaded_pipeline_name = None
+                            st.session_state.file_uploader_key += 1  # Reset file uploader
+                        st.rerun()
+        
+        with mgmt_col2:
+            # Direct download button without requiring two clicks
+            if st.session_state.pipeline_steps:
+                pipeline_data = {
+                    'pipeline_steps': st.session_state.pipeline_steps,
+                    'created_at': datetime.now().isoformat(),
+                    'version': '1.0'
+                }
+                json_str = json.dumps(pipeline_data, indent=2)
+                
+                st.download_button(
+                    label="💾 Save Pipeline",
+                    data=json_str,
+                    file_name=f"pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json",
+                    help="Download current pipeline configuration"
+                )
+        
+        with mgmt_col3:
+            if st.button("🗑️ Clear All", help="Remove all pipeline steps"):
+                st.session_state.pipeline_steps = []
+                st.session_state.pipeline_results = []
+                # Only reset upload state when explicitly clearing all
+                st.session_state.pipeline_loaded = False
+                st.session_state.uploaded_pipeline_name = None
+                st.session_state.file_uploader_key += 1  # Reset file uploader
+                st.rerun()
+        
+        with mgmt_col4:
+            # Show load pipeline button with current pipeline
+            with st.expander("📂 Load Pipeline", expanded=False):
+                st.info("💡 **Optional:** Load a previously saved pipeline configuration to replace or extend the current pipeline.")
+                uploaded_pipeline = st.file_uploader("Choose pipeline file", type=['json'], 
+                                               help="Upload a previously saved pipeline configuration",
+                                               key=f"pipeline_uploader_{st.session_state.file_uploader_key}")
+                if uploaded_pipeline is not None:
+                    # Check if this is a new upload or the same file being reprocessed
+                    if st.session_state.uploaded_pipeline_name != uploaded_pipeline.name:
+                        st.session_state.uploaded_pipeline_name = uploaded_pipeline.name
                         st.session_state.pipeline_loaded = False
+                    
+                    # Only load if we haven't processed this file yet
+                    if not st.session_state.pipeline_loaded:
+                        load_pipeline(uploaded_pipeline)
+                else:
+                    # Reset when no file is uploaded
+                    if st.session_state.uploaded_pipeline_name is not None:
                         st.session_state.uploaded_pipeline_name = None
+                        st.session_state.pipeline_loaded = False
+                
+                if st.session_state.uploaded_pipeline_name is not None:
+                    if st.button("📤 Clear Upload", key="clear_upload_existing",
+                                help="Clear uploaded pipeline file"):
+                        st.session_state.uploaded_pipeline_name = None
+                        st.session_state.pipeline_loaded = False
                         st.session_state.file_uploader_key += 1  # Reset file uploader
-                    st.rerun()
+                        st.rerun()
     else:
         st.info("No pipeline steps added yet. Use the controls below to add steps.")
+        
+        # Pipeline load section when no steps exist
+        with st.expander("📂 Load Existing Pipeline (Optional)", expanded=False):
+            st.info("💡 **Optional:** Load a previously saved pipeline configuration to get started quickly.")
+            uploaded_pipeline = st.file_uploader("Choose pipeline file", type=['json'], 
+                                           help="Upload a previously saved pipeline configuration",
+                                           key=f"pipeline_uploader_{st.session_state.file_uploader_key}")
+            if uploaded_pipeline is not None:
+                # Check if this is a new upload or the same file being reprocessed
+                if st.session_state.uploaded_pipeline_name != uploaded_pipeline.name:
+                    st.session_state.uploaded_pipeline_name = uploaded_pipeline.name
+                    st.session_state.pipeline_loaded = False
+                
+                # Only load if we haven't processed this file yet
+                if not st.session_state.pipeline_loaded:
+                    load_pipeline(uploaded_pipeline)
+            else:
+                # Reset when no file is uploaded
+                if st.session_state.uploaded_pipeline_name is not None:
+                    st.session_state.uploaded_pipeline_name = None
+                    st.session_state.pipeline_loaded = False
     
     # Configure pipeline steps (only if there are steps)
     if st.session_state.pipeline_steps:
@@ -2011,11 +2036,9 @@ def main():
     # Show helpful message if pipeline was uploaded
     if st.session_state.uploaded_pipeline_name is not None:
         if len(st.session_state.pipeline_steps) > 0:
-            st.info(f"📋 Pipeline loaded from '{st.session_state.uploaded_pipeline_name}' with {len(st.session_state.pipeline_steps)} step(s). You can add more steps below.")
+            st.success(f"✅ Pipeline loaded from '{st.session_state.uploaded_pipeline_name}' with {len(st.session_state.pipeline_steps)} step(s). You can add more steps below.")
         else:
             st.info(f"📋 Pipeline file '{st.session_state.uploaded_pipeline_name}' was loaded but contained no steps. Add steps below.")
-    elif len(st.session_state.pipeline_steps) > 0:
-        st.info(f"🔧 Current pipeline has {len(st.session_state.pipeline_steps)} step(s). Add more steps below.")
     
     col1, col2 = st.columns([2, 1])
     
@@ -2361,29 +2384,6 @@ def execute_bulk_pipeline():
         st.warning(f"⚠️ {failed} images failed to process")
     
     st.info(f"📁 Results saved to: {bulk_output_dir}")
-
-def save_pipeline():
-    """Save current pipeline configuration."""
-    if not st.session_state.pipeline_steps:
-        st.warning("No pipeline to save")
-        return
-    
-    pipeline_data = {
-        'pipeline_steps': st.session_state.pipeline_steps,
-        'created_at': datetime.now().isoformat(),
-        'version': '1.0'
-    }
-    
-    # Convert to JSON string
-    json_str = json.dumps(pipeline_data, indent=2)
-    
-    # Offer download
-    st.download_button(
-        label="💾 Download Pipeline",
-        data=json_str,
-        file_name=f"pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-        mime="application/json"
-    )
 
 def load_pipeline(uploaded_file):
     """Load pipeline configuration from file."""
