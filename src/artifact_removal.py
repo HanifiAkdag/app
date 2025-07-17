@@ -4,12 +4,9 @@ import matplotlib.pyplot as plt
 from typing import Tuple, Optional, Dict, Any, List, Union
 from PIL import Image
 
-try:
-    from simple_lama_inpainting import SimpleLama
-    LAMA_AVAILABLE = True
-except ImportError:
-    LAMA_AVAILABLE = False
-    SimpleLama = None
+# LaMa inpainting is disabled to avoid PyTorch warnings
+LAMA_AVAILABLE = False
+SimpleLama = None
 
 from .utils import make_odd
 
@@ -23,13 +20,6 @@ class ArtifactRemover:
     def __init__(self):
         """Initialize the artifact remover."""
         self.intermediate_images = {}
-        self._lama_model = None
-    
-    def _get_lama_model(self):
-        """Get or initialize the LaMa model instance."""
-        if self._lama_model is None and LAMA_AVAILABLE:
-            self._lama_model = SimpleLama()
-        return self._lama_model
     
     def create_artifact_mask(self, 
                            image: np.ndarray, 
@@ -178,7 +168,7 @@ class ArtifactRemover:
         Args:
             image: Input grayscale image (uint8)
             mask: Binary mask of regions to inpaint
-            method: Inpainting method ("telea", "ns", "lama")
+            method: Inpainting method ("telea", "ns") - LaMa removed to avoid PyTorch warnings
             radius: Inpainting radius (for telea and ns methods)
         
         Returns:
@@ -188,26 +178,11 @@ class ArtifactRemover:
             return image, False
         
         try:
-            if method == "lama" and LAMA_AVAILABLE:
-                # Use LaMa deep learning inpainting
-                lama_model = self._get_lama_model()
-                if lama_model is None:
-                    # Fallback to telea if LaMa fails
-                    return self.inpaint_artifacts(image, mask, "telea", radius)
-                
-                # Convert to PIL format
-                pil_image = Image.fromarray(image).convert('RGB')
-                pil_mask = Image.fromarray(mask.astype(np.uint8) * 255).convert('L')
-                
-                # Inpaint
-                result_pil = lama_model(pil_image, pil_mask)
-                
-                # Convert back to grayscale numpy
-                result = np.array(result_pil.convert('L'))
-                self.intermediate_images['inpainted_image'] = result
-                return result, True
+            if method == "lama":
+                # LaMa is disabled - fallback to telea
+                method = "telea"
             
-            elif method == "telea":
+            if method == "telea":
                 # Fast marching inpainting
                 result = cv2.inpaint(image, mask.astype(np.uint8), radius, cv2.INPAINT_TELEA)
                 self.intermediate_images['inpainted_image'] = result

@@ -176,7 +176,7 @@ results/
 *.tif
 *.bmp
 
-# Model files (for deep learning models like LaMa)
+# Model files (for deep learning models)
 *.pth
 *.pt
 *.onnx

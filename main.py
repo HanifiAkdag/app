@@ -206,8 +206,8 @@ def create_mask_drawing_interface():
     # Instructions
     with st.expander("📝 Drawing Instructions", expanded=False):
         st.markdown("""
+        - **Red areas**: Will be excluded from analysis (masked out)
         - **White areas**: Will be included in analysis
-        - **Black areas**: Will be excluded from analysis
         - **Freedraw**: Draw freehand shapes
         - **Rectangle/Circle**: Click and drag to create shapes
         - **Polygon**: Click points to create polygon, double-click to finish
@@ -241,11 +241,11 @@ def create_mask_drawing_interface():
                                 help="Size of the drawing brush")
     
     with tool_col3:
-        stroke_color = st.color_picker("🎨 Brush Color", "#FFFFFF", 
-                                     help="Color for drawing (white = include, black = exclude)")
+        stroke_color = st.color_picker("🎨 Brush Color", "#FF0000", 
+                                     help="Color for drawing (red = exclude, use eraser to include)")
     
     with tool_col4:
-        fill_background = st.checkbox("🌑 Fill Background", value=True,
+        fill_background = st.checkbox("🌑 Fill Background", value=False,
                                     help="Fill non-drawn areas with black (exclude from analysis)")
     
     # Control buttons
@@ -289,7 +289,7 @@ def create_mask_drawing_interface():
             fill_color="rgba(255, 255, 255, 0.0)",  # Transparent fill
             stroke_width=stroke_width,
             stroke_color=stroke_color,
-            background_color="#000000" if fill_background else "#FFFFFF",
+            background_color="#FFFFFF" if fill_background else "#000000",
             background_image=Image.fromarray(display_image_rgb),
             update_streamlit=True,
             height=canvas_height,
@@ -300,26 +300,40 @@ def create_mask_drawing_interface():
         
         # Process the drawn mask
         if canvas_result.image_data is not None:
-            # Extract the mask from the canvas
-            mask_data = canvas_result.image_data[:, :, 3]  # Alpha channel
+            # Extract RGB channels to detect red drawings
+            canvas_rgb = canvas_result.image_data[:, :, :3]
+            alpha_channel = canvas_result.image_data[:, :, 3]
             
-            # Resize mask to match original image size if needed
-            if mask_data.shape != display_image.shape[:2]:
-                mask_data = cv2.resize(mask_data, (display_image.shape[1], display_image.shape[0]), 
-                                     interpolation=cv2.INTER_NEAREST)
+            # Resize to match original image size if needed
+            if canvas_rgb.shape[:2] != display_image.shape[:2]:
+                canvas_rgb = cv2.resize(canvas_rgb, (display_image.shape[1], display_image.shape[0]), 
+                                      interpolation=cv2.INTER_NEAREST)
+                alpha_channel = cv2.resize(alpha_channel, (display_image.shape[1], display_image.shape[0]), 
+                                         interpolation=cv2.INTER_NEAREST)
             
-            # Convert to binary mask
-            binary_mask = mask_data > 128  # Threshold to create binary mask
+            # Create mask: Start with white (include everything)
+            mask = np.ones(display_image.shape[:2], dtype=np.uint8) * 255
+            
+            # Find red pixels (drawn areas) and mark them as excluded (black)
+            red_pixels = (canvas_rgb[:, :, 0] > 200) & (canvas_rgb[:, :, 1] < 100) & (canvas_rgb[:, :, 2] < 100) & (alpha_channel > 128)
+            mask[red_pixels] = 0  # Exclude red areas
+            
+            # Apply background fill if requested
+            if fill_background:
+                # If fill background is checked, exclude areas that weren't drawn on
+                drawn_areas = alpha_channel > 128
+                mask[~drawn_areas] = 0
             
             # Apply inversion if requested
             if invert_mask:
-                binary_mask = ~binary_mask
+                mask = 255 - mask
             
             # Store the mask
-            st.session_state.user_mask = binary_mask.astype(np.uint8) * 255
+            st.session_state.user_mask = mask
             
             # Show mask preview
-            if np.any(binary_mask):
+            binary_mask = mask > 128
+            if np.any(binary_mask) or np.any(~binary_mask):
                 show_mask_preview(display_image, binary_mask)
     
     except Exception as e:
@@ -335,7 +349,7 @@ def create_quick_mask_templates(display_image):
     template_col1, template_col2, template_col3, template_col4 = st.columns(4)
     
     with template_col1:
-        if st.button("🟫 Center Region", help="Mask the center 50% of the image"):
+        if st.button("🟫 Center Region", help="Include only the center 50% of the image"):
             h, w = display_image.shape[:2]
             mask = np.zeros((h, w), dtype=np.uint8)
             mask[h//4:3*h//4, w//4:3*w//4] = 255
@@ -2093,13 +2107,21 @@ def execute_pipeline():
     current_image = st.session_state.original_image.copy()
     material_mask = st.session_state.material_mask
     
-    # Use custom mask if available
+    # Merge masks if both exist
     if st.session_state.user_mask is not None and st.session_state.mask_enabled:
-        # Convert user mask to binary and use as material mask
+        # Convert user mask to binary
         custom_mask = (st.session_state.user_mask > 128).astype(bool)
-        material_mask = custom_mask
-        st.session_state.material_mask = material_mask
-        st.info("🎨 Using custom drawn mask for analysis")
+        
+        if material_mask is not None:
+            # Combine both masks using union (logical OR)
+            material_mask = np.logical_or(material_mask, custom_mask)
+            st.session_state.material_mask = material_mask
+            st.info("🎨 Merged custom drawn mask with preprocessing mask for analysis")
+        else:
+            # Use only custom mask if no preprocessing mask exists
+            material_mask = custom_mask
+            st.session_state.material_mask = material_mask
+            st.info("🎨 Using custom drawn mask for analysis")
     
     def prepare_for_json(obj):
         """Recursively prepare object for JSON serialization."""

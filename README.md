@@ -7,7 +7,7 @@ Streamlit-based microscopy image analysis tool for materials science with custom
 - **Custom Mask Drawing**: Interactive canvas for drawing custom analysis regions
 - **Phase Analysis**: Automatic detection, K-means/manual segmentation, statistical analysis
 - **Line Analysis**: Frangi filter, Hough transform, orientation analysis  
-- **Artifact Removal**: Multiple detection methods, advanced inpainting (Telea, Navier-Stokes, LaMa)
+- **Artifact Removal**: Multiple detection methods, advanced inpainting (Telea, Navier-Stokes)
 - **Preprocessing**: Illumination correction, denoising, material masking
 - **Pipeline Builder**: Interactive workflow design, save/load configurations, batch processing
 
@@ -102,7 +102,6 @@ The application will open at `http://localhost:8501`.
 - Percentile-based and Otsu threshold detection
 - Morphological opening and component analysis
 - Telea and Navier-Stokes inpainting
-- Optional LaMa deep learning inpainting
 
 #### Preprocessing (`src/preprocessing.py`)
 **Purpose**: Image enhancement and preparation for analysis
@@ -131,5 +130,5 @@ The application will open at `http://localhost:8501`.
 
 #### Artifact Removal
 - **Detection Method**: Percentile-based for consistent results, Otsu for automatic adaptation
-- **Inpainting Choice**: Telea for speed, Navier-Stokes for quality, LaMa for best results
+- **Inpainting Choice**: Telea for speed, Navier-Stokes for quality
 - **Size Filtering**: Set appropriate min/max areas based on typical artifact sizes
